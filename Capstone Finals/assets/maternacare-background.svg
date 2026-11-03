@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" fill="none">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="1600" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF9FB"/>
+      <stop offset=".52" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#FFF4F7"/>
+    </linearGradient>
+    <radialGradient id="blush" cx="0" cy="0" r="1" gradientTransform="matrix(450 410 -390 428 1450 110)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FBCFE8" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#FBCFE8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="rose" cx="0" cy="0" r="1" gradientTransform="matrix(520 440 -420 496 180 900)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FCE7F3" stop-opacity=".75"/>
+      <stop offset="1" stop-color="#FCE7F3" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="38" height="38" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.5" fill="#DB2777" fill-opacity=".13"/>
+    </pattern>
+  </defs>
+
+  <path fill="url(#base)" d="M0 0h1600v1000H0z"/>
+  <path fill="url(#blush)" d="M0 0h1600v1000H0z"/>
+  <path fill="url(#rose)" d="M0 0h1600v1000H0z"/>
+
+  <circle cx="1430" cy="170" r="248" fill="url(#dots)" opacity=".48"/>
+  <circle cx="1460" cy="155" r="248" stroke="#F9A8D4" stroke-opacity=".26" stroke-width="2"/>
+  <circle cx="1460" cy="155" r="202" stroke="#F9A8D4" stroke-opacity=".2" stroke-width="2"/>
+  <circle cx="1460" cy="155" r="154" stroke="#F9A8D4" stroke-opacity=".16" stroke-width="2"/>
+
+  <path d="M0 734c188-142 352-132 498-38 136 88 266 101 415 12 130-78 230-97 354-35 132 66 229 45 333-61v388H0V734Z" fill="#FCE7F3" fill-opacity=".32"/>
+  <path d="M0 800c188-142 352-132 498-38 136 88 266 101 415 12 130-78 230-97 354-35 132 66 229 45 333-61" stroke="#F9A8D4" stroke-opacity=".24" stroke-width="3"/>
+
+  <!-- Quiet maternal-care details near the margins -->
+  <g stroke="#DB2777" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".15" stroke-width="3">
+    <path d="M195 220v46m-23-23h46"/>
+    <path d="M1370 565v38m-19-19h38"/>
+    <path d="M278 770c-20-19-50-1-34 23l34 34 34-34c16-24-14-42-34-23Z"/>
+    <path d="M1278 785c-24-22-59-2-40 27l40 39 40-39c19-29-16-49-40-27Z"/>
+    <path d="M140 465c30-24 60-24 90 0s60 24 90 0 60-24 90 0"/>
+    <path d="M1280 390c24-18 48-18 72 0s48 18 72 0"/>
+  </g>
+
+  <g fill="#DB2777" fill-opacity=".15">
+    <circle cx="195" cy="320" r="5"/>
+    <circle cx="226" cy="320" r="5"/>
+    <circle cx="257" cy="320" r="5"/>
+    <circle cx="1330" cy="680" r="4"/>
+    <circle cx="1360" cy="680" r="4"/>
+    <circle cx="1390" cy="680" r="4"/>
+  </g>
+
+  <path d="M1050 210c0-42 34-76 76-76 38 0 69 28 75 64 6-36 37-64 75-64 42 0 76 34 76 76 0 97-151 175-151 175s-151-78-151-175Z" fill="#F9A8D4" fill-opacity=".12"/>
+</svg>
