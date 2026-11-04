@@ -1,6 +1,7 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
+import { readFileSync } from "node:fs";
 import mysql from "mysql2/promise";
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import path from "node:path";
@@ -14,6 +15,12 @@ const reminderHoursBefore = Number.isFinite(configuredReminderHours) ? Math.max(
 const scrypt = promisify(scryptCallback);
 const currentFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(currentFile);
+const databaseSsl = process.env.DB_SSL === "true"
+    ? {
+        rejectUnauthorized: true,
+        ...(process.env.DB_SSL_CA ? { ca: readFileSync(process.env.DB_SSL_CA) } : {})
+    }
+    : undefined;
 
 function normalizeDateColumn(value, fieldName) {
     if (value === undefined || value === null || value === "") return null;
@@ -86,6 +93,7 @@ const databasePool = mysql.createPool({
     database: process.env.DB_NAME || "maternadb",
     user: process.env.DB_USER || "root",
     password: process.env.DB_PASSWORD || "",
+    ssl: databaseSsl,
     waitForConnections: true,
     connectionLimit: 10,
     dateStrings: ["DATE"]
