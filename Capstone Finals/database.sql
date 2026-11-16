@@ -182,13 +182,39 @@ CREATE TABLE IF NOT EXISTS barangay_supply_distributions (
     distribution_date DATE NOT NULL,
     notes TEXT,
     distributed_by INT NULL,
+    receipt_status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+    received_by INT NULL,
+    received_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_supply_distributions_date (distribution_date),
     INDEX idx_supply_distributions_barangay (barangay),
     INDEX idx_supply_distributions_need (resource_need_id),
     FOREIGN KEY (inventory_id) REFERENCES barangay_inventory(id) ON DELETE SET NULL,
     FOREIGN KEY (resource_need_id) REFERENCES barangay_resource_needs(id) ON DELETE SET NULL,
-    FOREIGN KEY (distributed_by) REFERENCES app_users(id) ON DELETE SET NULL
+    FOREIGN KEY (distributed_by) REFERENCES app_users(id) ON DELETE SET NULL,
+    FOREIGN KEY (received_by) REFERENCES app_users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS maternal_medication_records (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    maternal_record_id INT NOT NULL,
+    inventory_id INT NULL,
+    medicine_name VARCHAR(160) NOT NULL,
+    quantity DECIMAL(12, 2) UNSIGNED NOT NULL,
+    unit VARCHAR(30) NOT NULL,
+    remaining_quantity DECIMAL(12, 2) UNSIGNED NULL,
+    given_date DATE NOT NULL,
+    notes TEXT,
+    recipient_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+    recipient_confirmed_at DATETIME NULL,
+    dispensed_by INT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_maternal_medication_records_date (maternal_record_id, given_date),
+    INDEX idx_maternal_medication_inventory_id (inventory_id),
+    FOREIGN KEY (maternal_record_id) REFERENCES maternal_records(id) ON DELETE CASCADE,
+    CONSTRAINT fk_maternal_medication_inventory
+        FOREIGN KEY (inventory_id) REFERENCES barangay_inventory(id) ON DELETE SET NULL,
+    FOREIGN KEY (dispensed_by) REFERENCES app_users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS sms_logs (

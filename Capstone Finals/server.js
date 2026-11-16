@@ -61,6 +61,14 @@ function normalizeDateColumn(value, fieldName) {
     return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function validateMaternalAge(value) {
+    const age = Number(value);
+    if (!Number.isInteger(age) || age < 10 || age > 60) {
+        return "Age must be a whole number between 10 and 60.";
+    }
+    return null;
+}
+
 function getMaternalRecordUpdateError(error) {
     const connectionErrors = new Set([
         "ECONNREFUSED",
@@ -379,14 +387,46 @@ async function ensureSupplyDistributionsTable() {
                     distribution_date DATE NOT NULL,
                     notes TEXT,
                     distributed_by INT NULL,
+                    receipt_status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+                    received_by INT NULL,
+                    received_at DATETIME NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_supply_distributions_date (distribution_date),
                     INDEX idx_supply_distributions_barangay (barangay),
                     INDEX idx_supply_distributions_need (resource_need_id),
                     FOREIGN KEY (inventory_id) REFERENCES barangay_inventory(id) ON DELETE SET NULL,
                     FOREIGN KEY (resource_need_id) REFERENCES barangay_resource_needs(id) ON DELETE SET NULL,
-                    FOREIGN KEY (distributed_by) REFERENCES app_users(id) ON DELETE SET NULL
+                    FOREIGN KEY (distributed_by) REFERENCES app_users(id) ON DELETE SET NULL,
+                    FOREIGN KEY (received_by) REFERENCES app_users(id) ON DELETE SET NULL
                 )
+            `);
+            const [columns] = await databasePool.execute(`
+                SELECT COLUMN_NAME AS column_name
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'barangay_supply_distributions'
+                  AND COLUMN_NAME IN ('receipt_status', 'received_by', 'received_at')
+            `);
+            const existingColumns = new Set(columns.map(column => column.column_name));
+            if (!existingColumns.has("receipt_status")) {
+                await databasePool.query("ALTER TABLE barangay_supply_distributions ADD COLUMN receipt_status VARCHAR(20) NULL");
+                await databasePool.query(`
+                    UPDATE barangay_supply_distributions
+                    SET receipt_status = 'Received'
+                    WHERE receipt_status IS NULL
+                `);
+                await databasePool.query("ALTER TABLE barangay_supply_distributions MODIFY receipt_status VARCHAR(20) NOT NULL DEFAULT 'Pending'");
+            }
+            if (!existingColumns.has("received_by")) {
+                await databasePool.query("ALTER TABLE barangay_supply_distributions ADD COLUMN received_by INT NULL");
+            }
+            if (!existingColumns.has("received_at")) {
+                await databasePool.query("ALTER TABLE barangay_supply_distributions ADD COLUMN received_at DATETIME NULL");
+            }
+            await databasePool.query(`
+                UPDATE barangay_supply_distributions
+                SET receipt_status = 'Received'
+                WHERE receipt_status IS NULL
             `);
         })().catch(error => {
             supplyDistributionsTableSetup = null;
@@ -394,6 +434,73 @@ async function ensureSupplyDistributionsTable() {
         });
     }
     await supplyDistributionsTableSetup;
+}
+
+let maternalMedicationTableSetup = null;
+
+async function ensureMaternalMedicationTable() {
+    if (!maternalMedicationTableSetup) {
+        maternalMedicationTableSetup = (async () => {
+            await ensureInventoryTable();
+            await databasePool.query(`
+                CREATE TABLE IF NOT EXISTS maternal_medication_records (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    maternal_record_id INT NOT NULL,
+                    inventory_id INT NULL,
+                    medicine_name VARCHAR(160) NOT NULL,
+                    quantity DECIMAL(12, 2) UNSIGNED NOT NULL,
+                    unit VARCHAR(30) NOT NULL,
+                    remaining_quantity DECIMAL(12, 2) UNSIGNED NULL,
+                    given_date DATE NOT NULL,
+                    notes TEXT,
+                    recipient_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+                    recipient_confirmed_at DATETIME NULL,
+                    dispensed_by INT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_maternal_medication_records_date (maternal_record_id, given_date),
+                    INDEX idx_maternal_medication_inventory_id (inventory_id),
+                    FOREIGN KEY (maternal_record_id) REFERENCES maternal_records(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_maternal_medication_inventory
+                        FOREIGN KEY (inventory_id) REFERENCES barangay_inventory(id) ON DELETE SET NULL,
+                    FOREIGN KEY (dispensed_by) REFERENCES app_users(id) ON DELETE SET NULL
+                )
+            `);
+
+            const [columns] = await databasePool.execute(`
+                SELECT COLUMN_NAME AS column_name
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'maternal_medication_records'
+                  AND COLUMN_NAME IN ('inventory_id', 'remaining_quantity')
+            `);
+            const existingColumns = new Set(columns.map(column => column.column_name));
+            if (!existingColumns.has("inventory_id")) {
+                await databasePool.query("ALTER TABLE maternal_medication_records ADD COLUMN inventory_id INT NULL");
+            }
+            if (!existingColumns.has("remaining_quantity")) {
+                await databasePool.query("ALTER TABLE maternal_medication_records ADD COLUMN remaining_quantity DECIMAL(12, 2) UNSIGNED NULL");
+            }
+
+            const [constraints] = await databasePool.execute(`
+                SELECT CONSTRAINT_NAME AS constraint_name
+                FROM information_schema.REFERENTIAL_CONSTRAINTS
+                WHERE CONSTRAINT_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'maternal_medication_records'
+                  AND CONSTRAINT_NAME = 'fk_maternal_medication_inventory'
+            `);
+            if (!constraints.length) {
+                await databasePool.query(`
+                    ALTER TABLE maternal_medication_records
+                    ADD CONSTRAINT fk_maternal_medication_inventory
+                    FOREIGN KEY (inventory_id) REFERENCES barangay_inventory(id) ON DELETE SET NULL
+                `);
+            }
+        })().catch(error => {
+            maternalMedicationTableSetup = null;
+            throw error;
+        });
+    }
+    await maternalMedicationTableSetup;
 }
 
 async function ensureMaternalRecordColumns() {
@@ -845,6 +952,192 @@ app.get("/api/mothers", async (request, response) => {
     }
 });
 
+app.get("/api/mothers/:patientId/medications", async (request, response) => {
+    if (request.user.role !== "bhw" || !request.user.barangay) {
+        return response.status(403).json({ error: "An assigned barangay health-worker account is required to view medicine history." });
+    }
+
+    try {
+        await ensureMaternalRecordColumns();
+        await ensureMaternalMedicationTable();
+        const [motherRows] = await databasePool.execute(`
+            SELECT id
+            FROM maternal_records
+            WHERE patient_id = ? AND barangay = ? AND archived = FALSE
+            LIMIT 1
+        `, [request.params.patientId, request.user.barangay]);
+        if (!motherRows.length) return response.status(404).json({ error: "This mother record is not available to your barangay." });
+
+        const [rows] = await databasePool.execute(`
+            SELECT medication.id, medication.medicine_name, medication.quantity, medication.unit,
+                   medication.remaining_quantity,
+                   DATE_FORMAT(medication.given_date, '%Y-%m-%d') AS given_date,
+                   medication.notes, medication.recipient_confirmed, medication.recipient_confirmed_at,
+                   dispenser.display_name AS dispensed_by_name
+            FROM maternal_medication_records medication
+            LEFT JOIN app_users dispenser ON dispenser.id = medication.dispensed_by
+            WHERE medication.maternal_record_id = ?
+            ORDER BY medication.given_date DESC, medication.id DESC
+        `, [motherRows[0].id]);
+        return response.json(rows);
+    } catch (error) {
+        console.error("Maternal medicine history load failed:", error.message);
+        return response.status(503).json({ error: "Medicine history is unavailable. Check the database connection." });
+    }
+});
+
+app.get("/api/medicine-transactions", async (request, response) => {
+    if (request.user.role !== "bhw" || !request.user.barangay) {
+        return response.status(403).json({ error: "An assigned barangay health-worker account is required to view medicine transactions." });
+    }
+
+    try {
+        await ensureMaternalRecordColumns();
+        await ensureMaternalMedicationTable();
+        const [rows] = await databasePool.execute(`
+            SELECT medication.id, medication.medicine_name, medication.quantity, medication.unit,
+                   medication.remaining_quantity, maternal.patient_id, maternal.full_name AS patient_name,
+                   DATE_FORMAT(medication.given_date, '%Y-%m-%d') AS given_date,
+                   medication.notes, dispenser.display_name AS dispensed_by_name
+            FROM maternal_medication_records medication
+            INNER JOIN maternal_records maternal ON maternal.id = medication.maternal_record_id
+            LEFT JOIN app_users dispenser ON dispenser.id = medication.dispensed_by
+            WHERE maternal.barangay = ?
+            ORDER BY medication.given_date DESC, medication.id DESC
+            LIMIT 200
+        `, [request.user.barangay]);
+        return response.json(rows);
+    } catch (error) {
+        console.error("Medicine transaction history load failed:", error.message);
+        return response.status(503).json({ error: "Medicine transaction history is unavailable. Check the database connection." });
+    }
+});
+
+app.post("/api/mothers/:patientId/medications", async (request, response) => {
+    if (request.user.role !== "bhw" || !request.user.barangay) {
+        return response.status(403).json({ error: "An assigned barangay health-worker account is required to record medicine given." });
+    }
+    const body = request.body || {};
+    const inventoryId = Number(body.inventory_id);
+    const quantityText = String(body.quantity ?? "");
+    const quantity = Number(quantityText);
+    const notes = typeof body.notes === "string" ? body.notes.trim() : "";
+    let givenDate;
+    try {
+        givenDate = normalizeDateColumn(body.given_date, "Date given");
+    } catch (error) {
+        return response.status(400).json({ error: error.message });
+    }
+
+    if (!Number.isSafeInteger(inventoryId) || inventoryId < 1) return response.status(400).json({ error: "Choose a medicine from your barangay inventory." });
+    if (!/^\d+(?:\.\d{1,2})?$/.test(quantityText) || !Number.isFinite(quantity) || quantity <= 0 || quantity > 9999999999.99) {
+        return response.status(400).json({ error: "Quantity must be greater than zero and have no more than two decimal places." });
+    }
+    if (!givenDate) return response.status(400).json({ error: "A date given is required." });
+    if (givenDate > new Date().toISOString().slice(0, 10)) {
+        return response.status(400).json({ error: "Date given cannot be in the future." });
+    }
+    if (body.recipient_confirmed !== true) return response.status(400).json({ error: "Confirm that the mother or caregiver received the medicine." });
+    if (body.notes !== undefined && (typeof body.notes !== "string" || body.notes.length > 2000)) {
+        return response.status(400).json({ error: "Notes must be 2,000 characters or fewer." });
+    }
+
+    let connection;
+    let transactionStarted = false;
+    try {
+        await ensureMaternalRecordColumns();
+        await ensureMaternalMedicationTable();
+        connection = await databasePool.getConnection();
+        await connection.beginTransaction();
+        transactionStarted = true;
+
+        const [motherRows] = await connection.execute(`
+            SELECT id
+            FROM maternal_records
+            WHERE patient_id = ? AND barangay = ? AND archived = FALSE
+            LIMIT 1
+            FOR UPDATE
+        `, [request.params.patientId, request.user.barangay]);
+        if (!motherRows.length) {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(404).json({ error: "This mother record is not available to your barangay." });
+        }
+
+        const [inventoryRows] = await connection.execute(`
+            SELECT id, barangay, item_name, category, quantity, unit
+            FROM barangay_inventory
+            WHERE id = ? AND barangay = ?
+            FOR UPDATE
+        `, [inventoryId, request.user.barangay]);
+        if (!inventoryRows.length) {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(404).json({ error: "The selected medicine is not available in your barangay inventory." });
+        }
+
+        const medicine = inventoryRows[0];
+        if (String(medicine.category).trim().toLowerCase() !== "medicines") {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(400).json({ error: "Only inventory items categorized as Medicines can be dispensed here." });
+        }
+        const availableCents = Math.round(Number(medicine.quantity) * 100);
+        const dispensedCents = Math.round(quantity * 100);
+        if (dispensedCents > availableCents) {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(409).json({
+                error: `Insufficient stock. Only ${Number(medicine.quantity).toLocaleString()} ${medicine.unit} of ${medicine.item_name} are available.`,
+                available_quantity: Number(medicine.quantity)
+            });
+        }
+        const remainingQuantity = (availableCents - dispensedCents) / 100;
+
+        await connection.execute(`
+            INSERT INTO maternal_medication_records
+                (maternal_record_id, inventory_id, medicine_name, quantity, unit, remaining_quantity,
+                 given_date, notes, recipient_confirmed, recipient_confirmed_at, dispensed_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP, ?)
+        `, [
+            motherRows[0].id,
+            medicine.id,
+            medicine.item_name,
+            quantityText,
+            medicine.unit,
+            remainingQuantity,
+            givenDate,
+            notes || null,
+            request.user.id
+        ]);
+        await connection.execute(
+            "UPDATE barangay_inventory SET quantity = ? WHERE id = ?",
+            [remainingQuantity, medicine.id]
+        );
+        await connection.commit();
+        transactionStarted = false;
+        return response.status(201).json({
+            medicine_name: medicine.item_name,
+            quantity: Number(quantityText),
+            unit: medicine.unit,
+            remaining_quantity: remainingQuantity,
+            recipient_confirmed: true
+        });
+    } catch (error) {
+        if (connection && transactionStarted) {
+            try {
+                await connection.rollback();
+            } catch (rollbackError) {
+                console.error("Medicine dispensing rollback failed:", rollbackError.message);
+            }
+        }
+        console.error("Maternal medicine history save failed:", error.message);
+        return response.status(503).json({ error: "Medicine could not be dispensed or recorded. Check the database connection." });
+    } finally {
+        if (connection) connection.release();
+    }
+});
+
 app.get("/api/appointments", async (request, response) => {
     if (request.user.role !== "bhw" || !request.user.barangay) {
         return response.status(403).json({ error: "An assigned barangay health-worker account is required to view appointments." });
@@ -956,12 +1249,30 @@ app.put("/api/inventory/:id", async (request, response) => {
     }
 
     try {
-        await ensureInventoryTable();
+        await ensureSupplyDistributionsTable();
         const [existingRows] = await databasePool.execute(
-            `SELECT id FROM barangay_inventory WHERE id = ? ${request.user.role === "bhw" ? "AND barangay = ?" : ""} LIMIT 1`,
+            `SELECT id, barangay, item_name, category, unit
+             FROM barangay_inventory
+             WHERE id = ? ${request.user.role === "bhw" ? "AND barangay = ?" : ""} LIMIT 1`,
             request.user.role === "bhw" ? [id, request.user.barangay] : [id]
         );
         if (!existingRows.length) return response.status(404).json({ error: "Resource not found." });
+        const existingItem = existingRows[0];
+        const identityChanged = existingItem.barangay !== prepared.values[0]
+            || existingItem.item_name !== prepared.values[1]
+            || existingItem.category !== prepared.values[2]
+            || existingItem.unit !== prepared.values[4];
+        if (identityChanged) {
+            const [pendingDistributions] = await databasePool.execute(`
+                SELECT id
+                FROM barangay_supply_distributions
+                WHERE inventory_id = ? AND receipt_status = 'Pending' ${request.user.role === "bhw" ? "AND barangay = ?" : ""}
+                LIMIT 1
+            `, request.user.role === "bhw" ? [id, request.user.barangay] : [id]);
+            if (pendingDistributions.length) {
+                return response.status(409).json({ error: "This resource cannot be renamed, recategorized, or moved while a distribution is awaiting receipt confirmation." });
+            }
+        }
         await databasePool.execute(`
             UPDATE barangay_inventory
             SET barangay = ?, item_name = ?, category = ?, quantity = ?, unit = ?, minimum_quantity = ?, notes = ?
@@ -981,7 +1292,16 @@ app.delete("/api/inventory/:id", async (request, response) => {
     }
 
     try {
-        await ensureInventoryTable();
+        await ensureSupplyDistributionsTable();
+        const [pendingDistributions] = await databasePool.execute(`
+            SELECT id
+            FROM barangay_supply_distributions
+            WHERE inventory_id = ? AND receipt_status = 'Pending' ${request.user.role === "bhw" ? "AND barangay = ?" : ""}
+            LIMIT 1
+        `, request.user.role === "bhw" ? [id, request.user.barangay] : [id]);
+        if (pendingDistributions.length) {
+            return response.status(409).json({ error: "This resource cannot be deleted while a distribution is awaiting receipt confirmation." });
+        }
         const [result] = await databasePool.execute(
             `DELETE FROM barangay_inventory WHERE id = ? ${request.user.role === "bhw" ? "AND barangay = ?" : ""}`,
             request.user.role === "bhw" ? [id, request.user.barangay] : [id]
@@ -1067,8 +1387,8 @@ app.patch("/api/resource-needs/:id/status", async (request, response) => {
 });
 
 app.get("/api/supply-distributions", async (request, response) => {
-    if (request.user.role !== "municipality") {
-        return response.status(403).json({ error: "Only municipality officials can view supply distributions." });
+    if (!["municipality", "bhw"].includes(request.user.role) || (request.user.role === "bhw" && !request.user.barangay)) {
+        return response.status(403).json({ error: "An assigned barangay health-worker or municipality account is required to view supply distributions." });
     }
 
     try {
@@ -1077,12 +1397,15 @@ app.get("/api/supply-distributions", async (request, response) => {
             SELECT d.id, d.inventory_id, d.resource_need_id, d.barangay, d.item_name, d.category,
                    d.quantity, d.unit, DATE_FORMAT(d.distribution_date, '%Y-%m-%d') AS distribution_date,
                    d.notes, d.created_at, distributor.display_name AS distributed_by_name,
+                   d.receipt_status, d.received_at, receiver.display_name AS received_by_name,
                    need.item_name AS requested_item_name
             FROM barangay_supply_distributions d
             LEFT JOIN app_users distributor ON distributor.id = d.distributed_by
+            LEFT JOIN app_users receiver ON receiver.id = d.received_by
             LEFT JOIN barangay_resource_needs need ON need.id = d.resource_need_id
+            WHERE (? = 'municipality' OR d.barangay = ?)
             ORDER BY d.distribution_date DESC, d.id DESC
-        `);
+        `, [request.user.role, request.user.barangay || ""]);
         return response.json(rows);
     } catch (error) {
         console.error("Supply distributions load failed:", error.message);
@@ -1155,8 +1478,6 @@ app.post("/api/supply-distributions", async (request, response) => {
             transactionStarted = false;
             return response.status(400).json({ error: "This distribution would exceed the maximum quantity the inventory can store." });
         }
-        const newInventoryQuantity = newInventoryQuantityCents / 100;
-
         let nextRequestStatus = null;
         if (resourceNeedId !== null) {
             const [needRows] = await connection.execute(`
@@ -1198,13 +1519,13 @@ app.post("/api/supply-distributions", async (request, response) => {
                 transactionStarted = false;
                 return response.status(400).json({ error: "Distribution quantity exceeds the remaining amount on this request." });
             }
-            nextRequestStatus = totalAfterDistributionCents >= requestedQuantityCents ? "Fulfilled" : "Approved";
+            nextRequestStatus = "Approved";
         }
 
         await connection.execute(`
             INSERT INTO barangay_supply_distributions
-                (inventory_id, resource_need_id, barangay, item_name, category, quantity, unit, distribution_date, notes, distributed_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (inventory_id, resource_need_id, barangay, item_name, category, quantity, unit, distribution_date, notes, distributed_by, receipt_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')
         `, [
             inventoryItem.id,
             resourceNeedId,
@@ -1217,10 +1538,6 @@ app.post("/api/supply-distributions", async (request, response) => {
             notes,
             request.user.id
         ]);
-        await connection.execute(
-            "UPDATE barangay_inventory SET quantity = ? WHERE id = ?",
-            [newInventoryQuantity, inventoryItem.id]
-        );
         if (nextRequestStatus) {
             await connection.execute(`
                 UPDATE barangay_resource_needs
@@ -1232,7 +1549,8 @@ app.post("/api/supply-distributions", async (request, response) => {
         transactionStarted = false;
         return response.status(201).json({
             inventory_id: inventoryItem.id,
-            quantity: newInventoryQuantity,
+            quantity: inventoryItem.quantity,
+            receipt_status: "Pending",
             resource_need_status: nextRequestStatus
         });
     } catch (error) {
@@ -1245,6 +1563,121 @@ app.post("/api/supply-distributions", async (request, response) => {
         }
         console.error("Supply distribution save failed:", error.message);
         return response.status(503).json({ error: "Supply distribution could not be recorded. Check the database connection." });
+    } finally {
+        if (connection) connection.release();
+    }
+});
+
+app.post("/api/supply-distributions/:id/receipt", async (request, response) => {
+    if (request.user.role !== "bhw" || !request.user.barangay) {
+        return response.status(403).json({ error: "An assigned barangay health-worker account is required to confirm a supply receipt." });
+    }
+
+    const distributionId = Number(request.params.id);
+    if (!Number.isSafeInteger(distributionId) || distributionId < 1) {
+        return response.status(400).json({ error: "A valid supply distribution ID is required." });
+    }
+
+    let connection;
+    let transactionStarted = false;
+    try {
+        await ensureSupplyDistributionsTable();
+        connection = await databasePool.getConnection();
+        await connection.beginTransaction();
+        transactionStarted = true;
+
+        const [distributionRows] = await connection.execute(`
+            SELECT id, inventory_id, barangay, quantity, resource_need_id, receipt_status
+            FROM barangay_supply_distributions
+            WHERE id = ?
+            FOR UPDATE
+        `, [distributionId]);
+        if (!distributionRows.length || distributionRows[0].barangay !== request.user.barangay) {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(404).json({ error: "This supply distribution is not available to your barangay." });
+        }
+        const distribution = distributionRows[0];
+        if (distribution.receipt_status === "Received") {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(409).json({ error: "This supply distribution has already been confirmed as received." });
+        }
+        if (!distribution.inventory_id) {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(409).json({ error: "The linked barangay inventory item no longer exists, so receipt cannot update stock." });
+        }
+
+        const [inventoryRows] = await connection.execute(`
+            SELECT id, quantity
+            FROM barangay_inventory
+            WHERE id = ? AND barangay = ?
+            FOR UPDATE
+        `, [distribution.inventory_id, request.user.barangay]);
+        if (!inventoryRows.length) {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(409).json({ error: "The linked barangay inventory item is unavailable." });
+        }
+
+        const newInventoryQuantityCents = Math.round(Number(inventoryRows[0].quantity) * 100)
+            + Math.round(Number(distribution.quantity) * 100);
+        if (newInventoryQuantityCents > 999999999999) {
+            await connection.rollback();
+            transactionStarted = false;
+            return response.status(400).json({ error: "Confirming this receipt would exceed the maximum quantity the inventory can store." });
+        }
+        const newInventoryQuantity = newInventoryQuantityCents / 100;
+        await connection.execute(
+            "UPDATE barangay_inventory SET quantity = ? WHERE id = ?",
+            [newInventoryQuantity, distribution.inventory_id]
+        );
+        await connection.execute(`
+            UPDATE barangay_supply_distributions
+            SET receipt_status = 'Received', received_by = ?, received_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `, [request.user.id, distributionId]);
+
+        let resourceNeedStatus = null;
+        if (distribution.resource_need_id) {
+            const [needRows] = await connection.execute(`
+                SELECT id, quantity
+                FROM barangay_resource_needs
+                WHERE id = ?
+                FOR UPDATE
+            `, [distribution.resource_need_id]);
+            if (needRows.length) {
+                const [receivedTotals] = await connection.execute(`
+                    SELECT COALESCE(SUM(quantity), 0) AS quantity_received
+                    FROM barangay_supply_distributions
+                    WHERE resource_need_id = ? AND (receipt_status = 'Received' OR id = ?)
+                `, [distribution.resource_need_id, distributionId]);
+                resourceNeedStatus = Math.round(Number(receivedTotals[0].quantity_received) * 100)
+                    >= Math.round(Number(needRows[0].quantity) * 100)
+                    ? "Fulfilled"
+                    : "Approved";
+                await connection.execute(`
+                    UPDATE barangay_resource_needs
+                    SET status = ?, reviewed_by = ?
+                    WHERE id = ?
+                `, [resourceNeedStatus, request.user.id, distribution.resource_need_id]);
+            }
+        }
+
+        await connection.commit();
+        transactionStarted = false;
+        return response.json({ id: distributionId, receipt_status: "Received", quantity: newInventoryQuantity, resource_need_status: resourceNeedStatus });
+    } catch (error) {
+        if (connection && transactionStarted) {
+            try {
+                await connection.rollback();
+            } catch (rollbackError) {
+                console.error("Supply receipt rollback failed:", rollbackError.message);
+            }
+        }
+        console.error("Supply receipt confirmation failed:", error.message);
+        return response.status(503).json({ error: "Supply receipt could not be confirmed. Check the database connection." });
     } finally {
         if (connection) connection.release();
     }
@@ -1385,6 +1818,8 @@ app.post("/api/mothers", async (request, response) => {
     if (!mother.patient_id || !mother.full_name || !mother.contact_number) {
         return response.status(400).json({ error: "Patient ID, full name, and contact number are required." });
     }
+    const ageError = validateMaternalAge(mother.age);
+    if (ageError) return response.status(400).json({ error: ageError });
 
     let dateColumns;
     try {
@@ -1396,6 +1831,9 @@ app.post("/api/mothers", async (request, response) => {
         };
     } catch (error) {
         return response.status(400).json({ error: error.message });
+    }
+    if (dateColumns.dateOfBirth && dateColumns.dateOfBirth > new Date().toISOString().slice(0, 10)) {
+        return response.status(400).json({ error: "Date of birth cannot be in the future." });
     }
 
     const valueOrNull = value => value === "" || value === undefined ? null : value;
@@ -1451,6 +1889,8 @@ app.put("/api/mothers/:patientId", async (request, response) => {
     if (!patientId || patientId.length > 50 || !mother.full_name || !mother.contact_number) {
         return response.status(400).json({ error: "A valid patient ID, full name, and contact number are required." });
     }
+    const ageError = validateMaternalAge(mother.age);
+    if (ageError) return response.status(400).json({ error: ageError });
 
     let dateColumns;
     try {
@@ -1462,6 +1902,9 @@ app.put("/api/mothers/:patientId", async (request, response) => {
         };
     } catch (error) {
         return response.status(400).json({ error: error.message });
+    }
+    if (dateColumns.dateOfBirth && dateColumns.dateOfBirth > new Date().toISOString().slice(0, 10)) {
+        return response.status(400).json({ error: "Date of birth cannot be in the future." });
     }
 
     const valueOrNull = value => value === "" || value === undefined ? null : value;

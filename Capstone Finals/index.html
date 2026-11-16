@@ -576,7 +576,7 @@
                 <div id="municipal-stock-alerts" class="hidden bg-white border border-rose-200 rounded-2xl shadow-sm overflow-hidden">
                     <div class="p-4 bg-rose-50/70 border-b border-rose-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <div>
-                            <h3 class="font-bold text-rose-900 flex items-center gap-2"><i class="fa-solid fa-triangle-exclamation text-rose-600"></i>Barangay stock alerts</h3>
+                            <h3 class="font-bold text-rose-900 flex items-center gap-2"><i class="fa-solid fa-triangle-exclamation text-rose-600"></i>Medicine & resource stock alerts</h3>
                             <p id="municipal-stock-alert-summary" class="text-xs text-rose-800 mt-1" aria-live="polite"></p>
                         </div>
                         <span class="text-[11px] text-rose-700">Automatically checks reported stock; refreshes every 10 seconds while this page is open.</span>
@@ -646,6 +646,32 @@
                                 </tr>
                             </thead>
                             <tbody id="inventory-rows" class="divide-y divide-slate-100 text-sm"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="medicine-transactions-panel" class="hidden bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+                        <div>
+                            <h3 class="text-sm font-bold text-slate-800">Medicine dispensing history</h3>
+                            <p class="mt-1 text-xs text-slate-500">Recent medicine transactions for this barangay, including patient and remaining stock after each dispense.</p>
+                        </div>
+                        <span id="medicine-transactions-live-status" class="text-[11px] font-semibold text-emerald-700 whitespace-nowrap">Live updates</span>
+                    </div>
+                    <div id="medicine-transactions-error" class="hidden px-4 py-3 text-sm text-rose-700 bg-rose-50" role="alert"></div>
+                    <div class="overflow-x-auto custom-scrollbar">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50/75 border-b border-slate-100 text-slate-500 text-[11px] font-extrabold tracking-wider uppercase">
+                                    <th class="py-4 px-5">Date</th>
+                                    <th class="py-4 px-4">Medicine</th>
+                                    <th class="py-4 px-4">Quantity dispensed</th>
+                                    <th class="py-4 px-4">Patient</th>
+                                    <th class="py-4 px-4">Stock remaining</th>
+                                    <th class="py-4 px-5">Dispensed by</th>
+                                </tr>
+                            </thead>
+                            <tbody id="medicine-transactions-rows" class="divide-y divide-slate-100 text-sm"></tbody>
                         </table>
                     </div>
                 </div>
@@ -726,9 +752,9 @@
                     <div class="flex flex-col sm:flex-row justify-between sm:items-end gap-3 mb-4">
                         <div>
                             <h3 class="text-xl font-extrabold text-slate-900">Municipal Supply Distributions</h3>
-                            <p class="text-sm text-slate-500">Record supplies sent to barangays. Each distribution updates the barangay’s available inventory.</p>
+                            <p class="text-sm text-slate-500">Record supplies sent to barangays. Barangay stock updates after receipt is confirmed.</p>
                         </div>
-                        <button type="button" onclick="openDistributionModal()" class="bg-teal-700 hover:bg-teal-800 text-white px-4 py-2.5 rounded-xl font-semibold text-sm transition-all flex items-center gap-2 shadow-md">
+                        <button id="distribution-record-button" type="button" onclick="openDistributionModal()" class="bg-teal-700 hover:bg-teal-800 text-white px-4 py-2.5 rounded-xl font-semibold text-sm transition-all flex items-center gap-2 shadow-md">
                             <i class="fa-solid fa-truck-ramp-box"></i><span>Record Distribution</span>
                         </button>
                     </div>
@@ -751,6 +777,8 @@
                                         <th class="py-4 px-4">Quantity</th>
                                         <th class="py-4 px-4">Linked request</th>
                                         <th class="py-4 px-5">Recorded by</th>
+                                        <th class="py-4 px-4">Receipt status</th>
+                                        <th class="py-4 px-5 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="distributions-rows" class="divide-y divide-slate-100 text-sm"></tbody>
@@ -884,7 +912,7 @@
                     <div class="grid grid-cols-2 gap-4">
                         <div class="space-y-1">
                             <label class="block text-[10px] font-semibold text-slate-500 uppercase">Date of Birth</label>
-                            <input type="date" id="m-dob" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
+                            <input type="date" id="m-dob" oninput="updateMotherAgeFromDob()" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
                         </div>
                         <div class="space-y-1">
                             <label class="block text-[10px] font-semibold text-slate-500 uppercase">Email</label>
@@ -927,7 +955,9 @@
                 <div class="grid grid-cols-2 gap-4">
                     <div class="space-y-1">
                         <label class="block text-[11px] font-bold text-slate-500 uppercase">Age</label>
-                        <input type="number" id="m-age" required min="12" max="60" placeholder="28" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
+                        <input type="number" id="m-age" required min="10" max="60" step="1" placeholder="28" oninput="updateMotherAgeWarning()" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
+                        <p id="m-age-source" class="text-[10px] text-slate-400">Enter a date of birth to calculate age automatically.</p>
+                        <p id="m-age-warning" class="hidden text-[10px] leading-relaxed text-amber-700">This registration is for a pregnant person under 18. Please ensure appropriate follow-up and support.</p>
                     </div>
                     <div class="space-y-1">
                         <label class="block text-[11px] font-bold text-slate-500 uppercase">Barangay Zone / Sitio</label>
@@ -945,11 +975,12 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 pt-3">
                     <div class="space-y-1">
                         <label for="m-lmp" class="block text-[11px] font-bold text-slate-500 uppercase">Last Menstrual Period (LMP)</label>
-                        <input type="date" id="m-lmp" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
+                        <input type="date" id="m-lmp" onchange="updatePregnancyDates('lmp')" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
                     </div>
                     <div class="space-y-1">
                         <label for="m-edd" class="block text-[11px] font-bold text-slate-500 uppercase">Expected Delivery Date (EDD)</label>
-                        <input type="date" id="m-edd" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
+                        <input type="date" id="m-edd" onchange="updatePregnancyDates('edd')" class="w-full p-2.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-pink-500">
+                        <p class="text-[10px] text-slate-400">Automatically estimated 280 days apart. Editing either date updates the other.</p>
                     </div>
                 </div>
 
@@ -1643,6 +1674,9 @@
         let supplyDistributions = [];
         let supplyDistributionsLoadError = "";
         let supplyDistributionsLoadPromise = null;
+        let medicineTransactions = [];
+        let medicineTransactionsLoadError = "";
+        let medicineTransactionsLoadPromise = null;
         let appointments = [];
         let adminUsers = [];
         let adminPasswordResetUserId = null;
@@ -1657,6 +1691,9 @@
         let inventoryLoadPromise = null;
         let inventoryLastRefreshedAt = null;
         let activePrenatalVisitPatientId = null;
+        let activeMedicationPatientId = null;
+        let maternalMedicationHistoryRequestId = 0;
+        let medicationDispenseSaving = false;
         const maternalCarePresets = {
             'folic-acid': { name: 'Folic acid', category: 'Medicines', unit: 'tablet packs', notes: 'Use only according to clinician and municipal health office guidance.' },
             'prenatal-vitamins': { name: 'Multivitamins / prenatal vitamins', category: 'Medicines', unit: 'bottles', notes: 'Use only according to clinician and municipal health office guidance.' },
@@ -1700,7 +1737,8 @@
             if (!document.hidden && document.getElementById('tab-inventory')?.classList.contains('hidden') === false) {
                 loadInventory();
                 loadResourceNeeds();
-                if (activeUser?.role === 'municipality') loadSupplyDistributions();
+                if (['municipality', 'bhw'].includes(activeUser?.role)) loadSupplyDistributions();
+                if (activeUser?.role === 'bhw') loadMedicineTransactions();
             }
         });
 
@@ -1711,7 +1749,14 @@
                 if (!document.hidden && inventoryTab && !inventoryTab.classList.contains('hidden')) {
                     loadInventory();
                     loadResourceNeeds();
-                    if (activeUser?.role === 'municipality') loadSupplyDistributions();
+                    if (['municipality', 'bhw'].includes(activeUser?.role)) loadSupplyDistributions();
+                    if (activeUser?.role === 'bhw') loadMedicineTransactions();
+                }
+                const maternalRecordModal = document.getElementById('modal-view-mother');
+                if (!document.hidden && activeUser?.role === 'bhw'
+                    && maternalRecordModal && !maternalRecordModal.classList.contains('hidden')) {
+                    loadInventory();
+                    if (activeMedicationPatientId) loadMotherMedicationHistory(activeMedicationPatientId);
                 }
             }, 10000);
         }
@@ -1759,7 +1804,9 @@
             const isMunicipality = user.role === 'municipality';
             const isBarangayUser = user.role === 'bhw';
             const isAdmin = user.role === 'admin';
-            document.getElementById('municipal-distributions-panel').classList.toggle('hidden', !isMunicipality);
+            document.getElementById('municipal-distributions-panel').classList.toggle('hidden', !isMunicipality && !isBarangayUser);
+            document.getElementById('distribution-record-button').classList.toggle('hidden', !isMunicipality);
+            document.getElementById('medicine-transactions-panel').classList.toggle('hidden', !isBarangayUser);
             document.getElementById('need-submit-button').classList.toggle('hidden', !isBarangayUser);
             document.querySelector('#logged-user-info p:first-child').innerText = user.displayName;
             document.querySelector('#logged-user-info p:last-child').innerText = isMunicipality
@@ -1791,6 +1838,7 @@
 
             if (isMunicipality) {
                 recalculateStatSummary();
+                loadSupplyDistributions();
                 switchTab('inventory');
                 return;
             }
@@ -1839,6 +1887,8 @@
             populateMotherDropdowns();
             loadInventory();
             loadResourceNeeds();
+            loadSupplyDistributions();
+            loadMedicineTransactions();
             pushAuditLog("User Authentication", "SUCCESS", `${user.displayName} signed in with the BHW role.`);
             switchTab('dashboard');
         }
@@ -1923,7 +1973,7 @@
             if (tabId === 'inventory') {
                 loadInventory();
                 loadResourceNeeds();
-                if (activeUser?.role === 'municipality') loadSupplyDistributions();
+                if (['municipality', 'bhw'].includes(activeUser?.role)) loadSupplyDistributions();
             }
             // Audit trailing view tracking
             pushAuditLog("Navigation Event", "SUCCESS", `Mapsd to screen module: ${tabId.toUpperCase()}`);
@@ -2089,6 +2139,24 @@
             return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
         }
 
+        function shiftDateByDays(value, days) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+            const date = new Date(`${value}T00:00:00Z`);
+            if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) return '';
+            date.setUTCDate(date.getUTCDate() + days);
+            return date.toISOString().slice(0, 10);
+        }
+
+        function updatePregnancyDates(changedDate) {
+            const lmpInput = document.getElementById('m-lmp');
+            const eddInput = document.getElementById('m-edd');
+            if (changedDate === 'lmp') {
+                eddInput.value = lmpInput.value ? shiftDateByDays(lmpInput.value, 280) : '';
+            } else if (changedDate === 'edd') {
+                lmpInput.value = eddInput.value ? shiftDateByDays(eddInput.value, -280) : '';
+            }
+        }
+
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, character => ({
                 '&': '&amp;',
@@ -2121,6 +2189,80 @@
                 }
             })();
             return inventoryLoadPromise;
+        }
+
+        async function loadMedicineTransactions() {
+            if (activeUser?.role !== 'bhw' || medicineTransactionsLoadPromise) return medicineTransactionsLoadPromise;
+            medicineTransactionsLoadPromise = (async () => {
+                const status = document.getElementById('medicine-transactions-live-status');
+                const errorPanel = document.getElementById('medicine-transactions-error');
+                status.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin mr-1"></i>Syncing';
+                try {
+                    const response = await fetch('/api/medicine-transactions', { cache: 'no-store' });
+                    const result = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(result.error || 'Unable to load medicine dispensing history.');
+                    if (!Array.isArray(result)) throw new Error('The medicine transaction service returned an invalid response.');
+                    medicineTransactions = result;
+                    medicineTransactionsLoadError = '';
+                } catch (error) {
+                    medicineTransactionsLoadError = error.message;
+                    console.error('Medicine transaction history load failed:', error);
+                } finally {
+                    status.className = medicineTransactionsLoadError
+                        ? 'text-[11px] font-semibold text-rose-700 whitespace-nowrap'
+                        : 'text-[11px] font-semibold text-emerald-700 whitespace-nowrap';
+                    status.innerHTML = medicineTransactionsLoadError
+                        ? '<i class="fa-solid fa-triangle-exclamation mr-1"></i>Connection issue'
+                        : '<i class="fa-solid fa-circle-check mr-1"></i>Live updates';
+                    errorPanel.classList.toggle('hidden', !medicineTransactionsLoadError);
+                    errorPanel.textContent = medicineTransactionsLoadError
+                        ? `Medicine history could not be refreshed: ${medicineTransactionsLoadError}`
+                        : '';
+                    renderMedicineTransactions();
+                    medicineTransactionsLoadPromise = null;
+                }
+            })();
+            return medicineTransactionsLoadPromise;
+        }
+
+        function renderMedicineTransactions() {
+            const tableBody = document.getElementById('medicine-transactions-rows');
+            if (!tableBody) return;
+            if (!medicineTransactions.length) {
+                const message = medicineTransactionsLoadError
+                    ? `Medicine transaction history unavailable: ${escapeHtml(medicineTransactionsLoadError)}`
+                    : 'No medicine dispensing transactions have been recorded yet.';
+                tableBody.innerHTML = `<tr><td colspan="6" class="py-10 px-5 text-center text-sm text-slate-500">${message}</td></tr>`;
+                return;
+            }
+            tableBody.innerHTML = medicineTransactions.map(transaction => `
+                <tr class="align-top hover:bg-slate-50/50">
+                    <td class="py-3 px-5 text-xs text-slate-600 whitespace-nowrap">${escapeHtml(formatDateForDisplay(transaction.given_date))}</td>
+                    <td class="py-3 px-4 font-semibold text-slate-800">${escapeHtml(transaction.medicine_name)}</td>
+                    <td class="py-3 px-4 text-slate-700">${Number(transaction.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(transaction.unit)}</td>
+                    <td class="py-3 px-4"><p class="font-semibold text-slate-800">${escapeHtml(transaction.patient_name)}</p><p class="text-[10px] text-slate-500">${escapeHtml(transaction.patient_id)}</p></td>
+                    <td class="py-3 px-4 font-semibold ${transaction.remaining_quantity === null ? 'text-slate-400' : 'text-emerald-700'}">${transaction.remaining_quantity === null ? 'Not recorded' : `${Number(transaction.remaining_quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(transaction.unit)}`}</td>
+                    <td class="py-3 px-5 text-xs text-slate-600">${escapeHtml(transaction.dispensed_by_name || 'Former user')}</td>
+                </tr>
+            `).join('');
+        }
+
+        function refreshMedicineDispenseOptions() {
+            const select = document.getElementById('mother-medication-inventory');
+            if (!select) return;
+            const selectedInventoryId = select.value;
+            const medicines = inventory.filter(entry =>
+                String(entry.category).trim().toLowerCase() === 'medicines'
+            );
+            const stockedMedicines = medicines.filter(entry => Number(entry.quantity) > 0);
+            select.innerHTML = `<option value="">${stockedMedicines.length ? 'Select medicine from inventory' : 'No medicine in stock'}</option>`
+                + medicines.map(entry => `<option value="${Number(entry.id)}" ${Number(entry.quantity) <= 0 ? 'disabled' : ''}>${escapeHtml(entry.item_name)} · ${Number(entry.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(entry.unit)} available</option>`).join('');
+            select.value = stockedMedicines.some(entry => Number(entry.id) === Number(selectedInventoryId))
+                ? selectedInventoryId
+                : '';
+            const submitButton = document.querySelector('#mother-medication-form button[type="submit"]');
+            if (submitButton) submitButton.disabled = stockedMedicines.length === 0 || medicationDispenseSaving;
+            updateMedicineDispenseAvailability();
         }
 
         function renderInventory() {
@@ -2158,6 +2300,7 @@
             document.getElementById('inventory-stat-alerts').innerText = attentionCount;
             document.getElementById('inventory-stat-out').innerText = inventory.filter(entry => Number(entry.quantity) === 0).length;
             renderMunicipalStockAlerts();
+            refreshMedicineDispenseOptions();
 
             const filteredInventory = inventory.filter(entry => {
                 const text = `${entry.barangay} ${entry.item_name} ${entry.category} ${entry.notes || ''}`.toLowerCase();
@@ -2224,9 +2367,9 @@
         function renderMunicipalStockAlerts() {
             const panel = document.getElementById('municipal-stock-alerts');
             if (!panel) return;
-            const isMunicipality = activeUser?.role === 'municipality';
-            panel.classList.toggle('hidden', !isMunicipality);
-            if (!isMunicipality) return;
+            const canViewStockAlerts = ['municipality', 'bhw'].includes(activeUser?.role);
+            panel.classList.toggle('hidden', !canViewStockAlerts);
+            if (!canViewStockAlerts) return;
 
             const summary = document.getElementById('municipal-stock-alert-summary');
             const list = document.getElementById('municipal-stock-alert-list');
@@ -2241,7 +2384,7 @@
                 .sort((a, b) => Number(a.quantity) - Number(b.quantity));
             if (!alerts.length) {
                 summary.innerText = inventory.length
-                    ? 'No barangay resources are currently at or below their minimum stock levels.'
+                    ? 'No medicines or other resources are currently at or below their minimum stock levels.'
                     : 'No inventory records are available to check yet.';
                 list.innerHTML = '';
                 return;
@@ -2252,9 +2395,10 @@
             summary.innerText = `${outOfStockCount} out of stock · ${lowStockCount} at or below minimum`;
             list.innerHTML = alerts.map(entry => {
                 const outOfStock = Number(entry.quantity) === 0;
+                const isMedicine = String(entry.category).trim().toLowerCase() === 'medicines';
                 return `<div class="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
-                        <p class="font-bold text-slate-900">${escapeHtml(entry.item_name)} <span class="font-medium text-slate-500">· ${escapeHtml(entry.barangay)}</span></p>
+                        <p class="font-bold text-slate-900">${escapeHtml(entry.item_name)} <span class="font-medium text-slate-500">· ${escapeHtml(entry.barangay)}</span>${isMedicine ? ' <span class="ml-1 text-[10px] font-bold uppercase text-pink-700">Medicine</span>' : ''}</p>
                         <p class="text-xs text-slate-500 mt-0.5">${Number(entry.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(entry.unit)} available · minimum ${Number(entry.minimum_quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(entry.unit)}</p>
                     </div>
                     <span class="inline-flex self-start sm:self-auto border px-2.5 py-1 rounded-full text-[10px] font-bold ${outOfStock ? 'bg-rose-50 text-rose-700 border-rose-100' : 'bg-amber-50 text-amber-700 border-amber-100'}">${outOfStock ? 'Out of stock' : 'Low stock'}</span>
@@ -2488,7 +2632,7 @@
         }
 
         async function loadSupplyDistributions() {
-            if (activeUser?.role !== 'municipality' || supplyDistributionsLoadPromise) return supplyDistributionsLoadPromise;
+            if (!['municipality', 'bhw'].includes(activeUser?.role) || supplyDistributionsLoadPromise) return supplyDistributionsLoadPromise;
             supplyDistributionsLoadPromise = (async () => {
                 const liveStatus = document.getElementById('distributions-live-status');
                 liveStatus.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin mr-1"></i>Syncing';
@@ -2530,7 +2674,7 @@
                 const message = supplyDistributionsLoadError
                     ? `Distribution history unavailable: ${escapeHtml(supplyDistributionsLoadError)}`
                     : 'No supply distributions have been recorded yet.';
-                tableBody.innerHTML = `<tr><td colspan="6" class="py-12 px-5 text-center text-sm text-slate-500">${message}</td></tr>`;
+                tableBody.innerHTML = `<tr><td colspan="8" class="py-12 px-5 text-center text-sm text-slate-500">${message}</td></tr>`;
                 return;
             }
 
@@ -2545,6 +2689,15 @@
                 const linkedRequest = distribution.resource_need_id
                     ? `#${Number(distribution.resource_need_id)}${distribution.requested_item_name ? ` · ${escapeHtml(distribution.requested_item_name)}` : ''}`
                     : '—';
+                const isReceived = distribution.receipt_status === 'Received';
+                const receiptStatus = isReceived
+                    ? `<span class="font-semibold text-emerald-700">Received</span><p class="mt-1 text-[10px] text-slate-500">${escapeHtml(distribution.received_by_name || 'Barangay staff')}</p>`
+                    : '<span class="font-semibold text-amber-700">Awaiting confirmation</span>';
+                const receiptAction = activeUser?.role === 'bhw' && !isReceived
+                    ? `<button type="button" onclick="confirmSupplyReceipt(${Number(distribution.id)})" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700">Confirm received</button>`
+                    : isReceived
+                        ? '<span class="text-[11px] text-slate-400">Confirmed</span>'
+                        : '<span class="text-[11px] text-slate-400">Pending barangay confirmation</span>';
                 return `<tr class="align-top hover:bg-slate-50/50 transition-all">
                     <td class="py-4 px-5 text-xs text-slate-600 whitespace-nowrap">${formattedDate}</td>
                     <td class="py-4 px-4 font-semibold text-slate-800 whitespace-nowrap">${escapeHtml(distribution.barangay)}</td>
@@ -2552,8 +2705,28 @@
                     <td class="py-4 px-4 font-semibold text-slate-800 whitespace-nowrap">${Number(distribution.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(distribution.unit)}</td>
                     <td class="py-4 px-4 text-xs text-slate-600">${linkedRequest}</td>
                     <td class="py-4 px-5 text-xs text-slate-600">${escapeHtml(distribution.distributed_by_name || 'Former user')}</td>
+                    <td class="py-4 px-4 text-xs">${receiptStatus}</td>
+                    <td class="py-4 px-5 text-right whitespace-nowrap">${receiptAction}</td>
                 </tr>`;
             }).join('');
+        }
+
+        async function confirmSupplyReceipt(distributionId) {
+            const distribution = supplyDistributions.find(item => Number(item.id) === distributionId);
+            if (!distribution || activeUser?.role !== 'bhw') return;
+            if (!confirm(`Confirm receipt of ${distribution.quantity} ${distribution.unit} of ${distribution.item_name}? This will add it to ${distribution.barangay}'s inventory.`)) return;
+
+            try {
+                const response = await fetch(`/api/supply-distributions/${distributionId}/receipt`, { method: 'POST' });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Unable to confirm supply receipt.');
+                pushAuditLog('Supply Receipt Confirmed', 'SUCCESS', `${distribution.quantity} ${distribution.unit} of ${distribution.item_name} received by ${distribution.barangay}.`);
+                triggerToast('Receipt confirmed and barangay inventory updated.');
+                await Promise.all([loadInventory(), loadResourceNeeds(), loadSupplyDistributions()]);
+            } catch (error) {
+                triggerToast(`Receipt was not confirmed: ${error.message}`);
+                console.error('Supply receipt confirmation failed:', error);
+            }
         }
 
         async function loadResourceNeeds() {
@@ -2785,7 +2958,7 @@
                     'SUCCESS',
                     `${distribution.quantity} ${selectedInventory?.unit || 'units'} of ${selectedInventory?.item_name || 'a supply'} sent to ${selectedInventory?.barangay || 'a barangay'}.`
                 );
-                triggerToast('Distribution recorded and barangay inventory updated.');
+                triggerToast('Distribution recorded. The barangay must confirm receipt before its inventory is updated.');
                 await Promise.all([loadInventory(), loadResourceNeeds(), loadSupplyDistributions()]);
             } catch (error) {
                 errorPanel.textContent = error.message;
@@ -3041,12 +3214,13 @@
             `;
         }
 
-        function openViewMother(patientId) {
+        async function openViewMother(patientId) {
             const mother = mothers.find(item => item.id === patientId);
             if (!mother) {
                 triggerToast('This maternal record could not be found.');
                 return;
             }
+            if (activeUser?.role === 'bhw') await loadInventory();
 
             const history = mother.pregnancy_history || {};
             const profile = mother.health_profile || {};
@@ -3153,8 +3327,158 @@
             ];
 
             document.getElementById('view-mother-title').textContent = `${mother.full_name || mother.name} — ${mother.patient_id || mother.id}`;
-            document.getElementById('view-mother-content').innerHTML = sections.join('');
+            activeMedicationPatientId = mother.patient_id || mother.id;
+            const availableMedicines = inventory.filter(entry =>
+                String(entry.category).trim().toLowerCase() === 'medicines'
+            );
+            const stockedMedicines = availableMedicines.filter(entry => Number(entry.quantity) > 0);
+            const medicationForm = activeUser?.role === 'bhw' ? `
+                <form id="mother-medication-form" onsubmit="submitMotherMedication(event)" class="no-print mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Record medicine given</h5>
+                    <p class="text-[11px] text-slate-500">Choose an item from this barangay's medicine inventory. Stock is deducted when you confirm dispensing.</p>
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <select id="mother-medication-inventory" required onchange="updateMedicineDispenseAvailability()" class="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                            <option value="">${stockedMedicines.length ? 'Select medicine from inventory' : 'No medicine in stock'}</option>
+                        </select>
+                        <input id="mother-medication-quantity" type="number" min="0.01" step="0.01" required placeholder="Quantity to dispense" class="w-full rounded-lg border border-slate-200 p-2 text-xs">
+                        <input id="mother-medication-date" type="date" required class="w-full rounded-lg border border-slate-200 p-2 text-xs">
+                        <input id="mother-medication-notes" type="text" maxlength="2000" placeholder="Notes (optional)" class="w-full rounded-lg border border-slate-200 p-2 text-xs">
+                    </div>
+                    <p id="mother-medication-availability" class="text-[11px] font-semibold text-slate-600">${inventoryLoadError ? `Inventory unavailable: ${escapeHtml(inventoryLoadError)}` : stockedMedicines.length ? 'Select a medicine to see available stock.' : 'Add a medicine in the barangay inventory before dispensing.'}</p>
+                    <label class="flex items-start gap-2 text-[11px] text-slate-700">
+                        <input id="mother-medication-confirmed" type="checkbox" required class="mt-0.5">
+                        <span>Mother or caregiver confirmed receipt of this medicine.</span>
+                    </label>
+                    <button type="submit" ${stockedMedicines.length ? '' : 'disabled'} class="rounded-lg bg-pink-600 px-4 py-2 text-xs font-semibold text-white hover:bg-pink-700 disabled:cursor-not-allowed disabled:opacity-50">Dispense medicine</button>
+                </form>` : '';
+            const medicationSection = `
+                <section class="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                    <h4 class="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Medicines given & receipt history</h4>
+                    <div id="mother-medication-history" class="text-sm text-slate-500">Loading medicine history…</div>
+                    ${medicationForm}
+                </section>`;
+            document.getElementById('view-mother-content').innerHTML = sections.join('') + medicationSection;
+            if (activeUser?.role === 'bhw') {
+                document.getElementById('mother-medication-date').max = localDateInputValue();
+                document.getElementById('mother-medication-date').value = localDateInputValue();
+                refreshMedicineDispenseOptions();
+                loadMotherMedicationHistory(activeMedicationPatientId);
+            } else {
+                document.getElementById('mother-medication-history').textContent = 'Medicine history is available to the assigned barangay health worker.';
+            }
             document.getElementById('modal-view-mother').classList.remove('hidden');
+        }
+
+        async function loadMotherMedicationHistory(patientId) {
+            const historyElement = document.getElementById('mother-medication-history');
+            if (!historyElement || activeUser?.role !== 'bhw') return;
+            const requestId = ++maternalMedicationHistoryRequestId;
+            historyElement.textContent = 'Loading medicine history…';
+            try {
+                const response = await fetch(`/api/mothers/${encodeURIComponent(patientId)}/medications`, { cache: 'no-store' });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Unable to load medicine history.');
+                if (!Array.isArray(result)) throw new Error('The medicine history response was invalid.');
+                if (requestId !== maternalMedicationHistoryRequestId
+                    || activeMedicationPatientId !== patientId
+                    || !document.getElementById('mother-medication-history')) return;
+                historyElement.innerHTML = result.length ? `
+                    <div class="divide-y divide-slate-100">
+                        ${result.map(entry => {
+                            const date = formatDateForDisplay(entry.given_date);
+                            return `<div class="py-3 first:pt-1">
+                                <div class="flex flex-wrap items-start justify-between gap-2">
+                                    <p class="font-semibold text-slate-800">${escapeHtml(entry.medicine_name)}</p>
+                                    <span class="text-xs text-slate-500">${escapeHtml(date)}</span>
+                                </div>
+                                <p class="mt-1 text-xs text-slate-600">${Number(entry.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(entry.unit)} · Receipt confirmed by mother/caregiver</p>
+                                <p class="mt-1 text-xs font-semibold text-emerald-700">${entry.remaining_quantity === null ? 'Stock remaining: Not recorded' : `Stock remaining after dispense: ${Number(entry.remaining_quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHtml(entry.unit)}`}</p>
+                                ${entry.notes ? `<p class="mt-1 text-xs text-slate-500">${escapeHtml(entry.notes)}</p>` : ''}
+                                <p class="mt-1 text-[10px] text-slate-400">Recorded by ${escapeHtml(entry.dispensed_by_name || 'Former user')}</p>
+                            </div>`;
+                        }).join('')}
+                    </div>` : '<p class="py-2 text-sm text-slate-400">No medicine records have been entered.</p>';
+            } catch (error) {
+                if (requestId !== maternalMedicationHistoryRequestId
+                    || activeMedicationPatientId !== patientId
+                    || !historyElement.isConnected) return;
+                historyElement.textContent = `Medicine history could not be loaded: ${error.message}`;
+                console.error('Maternal medicine history load failed:', error);
+            }
+        }
+
+        function updateMedicineDispenseAvailability() {
+            const select = document.getElementById('mother-medication-inventory');
+            const quantityInput = document.getElementById('mother-medication-quantity');
+            const availability = document.getElementById('mother-medication-availability');
+            if (!select || !quantityInput || !availability) return;
+            const medicine = inventory.find(entry => Number(entry.id) === Number(select.value));
+            if (!medicine || String(medicine.category).trim().toLowerCase() !== 'medicines') {
+                quantityInput.removeAttribute('max');
+                const hasMedicines = inventory.some(entry => String(entry.category).trim().toLowerCase() === 'medicines');
+                availability.textContent = inventoryLoadError
+                    ? `Inventory unavailable: ${inventoryLoadError}`
+                    : hasMedicines
+                        ? 'Select a medicine to see available stock.'
+                        : 'Add a medicine in the barangay inventory before dispensing.';
+                return;
+            }
+            const available = Number(medicine.quantity);
+            quantityInput.max = String(available);
+            availability.className = `text-[11px] font-semibold ${available <= Number(medicine.minimum_quantity) ? 'text-amber-700' : 'text-emerald-700'}`;
+            availability.textContent = `${available.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${medicine.unit} available${available <= Number(medicine.minimum_quantity) ? ' · Low stock' : ''}`;
+        }
+
+        async function submitMotherMedication(event) {
+            event.preventDefault();
+            if (activeUser?.role !== 'bhw' || !activeMedicationPatientId || medicationDispenseSaving) return;
+            const inventoryId = Number(document.getElementById('mother-medication-inventory').value);
+            const medicine = inventory.find(entry => Number(entry.id) === inventoryId);
+            if (!medicine || String(medicine.category).trim().toLowerCase() !== 'medicines') {
+                triggerToast('Choose a medicine from your barangay inventory.');
+                return;
+            }
+            const medication = {
+                inventory_id: inventoryId,
+                quantity: document.getElementById('mother-medication-quantity').value,
+                given_date: document.getElementById('mother-medication-date').value,
+                notes: document.getElementById('mother-medication-notes').value.trim(),
+                recipient_confirmed: document.getElementById('mother-medication-confirmed').checked
+            };
+            const submitButton = event.submitter;
+            medicationDispenseSaving = true;
+            if (submitButton) submitButton.disabled = true;
+            try {
+                const response = await fetch(`/api/mothers/${encodeURIComponent(activeMedicationPatientId)}/medications`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(medication)
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Unable to save medicine history.');
+                const patientId = activeMedicationPatientId;
+                document.getElementById('mother-medication-form').reset();
+                document.getElementById('mother-medication-date').value = localDateInputValue();
+                if (inventoryLoadPromise) await inventoryLoadPromise;
+                if (medicineTransactionsLoadPromise) await medicineTransactionsLoadPromise;
+                await Promise.all([
+                    loadInventory(),
+                    loadMedicineTransactions(),
+                    loadMotherMedicationHistory(patientId)
+                ]);
+                updateMedicineDispenseAvailability();
+                pushAuditLog('Medicine Dispensed', 'SUCCESS', `${result.quantity} ${result.unit} of ${result.medicine_name} dispensed to ${document.getElementById('view-mother-title').textContent}; ${result.remaining_quantity} ${result.unit} remain.`);
+                const lowStockMessage = Number(result.remaining_quantity) <= Number(medicine.minimum_quantity)
+                    ? ' Low-stock alert: replenish this medicine soon.'
+                    : '';
+                triggerToast(`${result.medicine_name} dispensed. ${Number(result.remaining_quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${result.unit} remain in stock.${lowStockMessage}`);
+            } catch (error) {
+                triggerToast(`Medicine was not dispensed: ${error.message}`);
+                console.error('Maternal medicine history save failed:', error);
+            } finally {
+                medicationDispenseSaving = false;
+                refreshMedicineDispenseOptions();
+            }
         }
 
         function printMaternalRecord() {
@@ -3174,6 +3498,7 @@
         function closeViewMotherModal() {
             document.getElementById('modal-view-mother').classList.add('hidden');
             document.getElementById('view-mother-content').innerHTML = '';
+            activeMedicationPatientId = null;
         }
 
         function filterMothers() {
@@ -3191,9 +3516,52 @@
         // ==============================================
         let editingMotherId = null;
 
+        function updateMotherAgeWarning() {
+            const age = Number(document.getElementById('m-age').value);
+            document.getElementById('m-age-warning').classList.toggle('hidden', !Number.isInteger(age) || age < 10 || age >= 18);
+        }
+
+        function updateMotherAgeFromDob() {
+            const dobInput = document.getElementById('m-dob');
+            const ageInput = document.getElementById('m-age');
+            const ageSource = document.getElementById('m-age-source');
+            const dob = dobInput.value;
+            if (!dob) {
+                ageInput.readOnly = false;
+                ageSource.textContent = 'Enter a date of birth to calculate age automatically.';
+                updateMotherAgeWarning();
+                return;
+            }
+
+            const [year, month, day] = dob.split('-').map(Number);
+            const birthDate = new Date(year, month - 1, day);
+            const today = new Date();
+            if (Number.isNaN(birthDate.getTime())
+                || birthDate.getFullYear() !== year
+                || birthDate.getMonth() !== month - 1
+                || birthDate.getDate() !== day
+                || birthDate > new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
+                ageInput.value = '';
+                ageInput.readOnly = true;
+                ageSource.textContent = 'Enter a valid date of birth that is not in the future.';
+                updateMotherAgeWarning();
+                return;
+            }
+
+            let age = today.getFullYear() - year;
+            if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) age--;
+            ageInput.value = String(age);
+            ageInput.readOnly = true;
+            ageSource.textContent = 'Age is calculated from date of birth.';
+            updateMotherAgeWarning();
+        }
+
         function openAddMotherModal() {
             editingMotherId = null;
             document.querySelector('#modal-add-mother form').reset();
+            updateMotherAgeFromDob();
+            document.getElementById('m-dob').max = localDateInputValue();
+            updateMotherAgeWarning();
             document.getElementById('m-lmp').max = localDateInputValue();
             document.getElementById('m-edd').removeAttribute('min');
             document.getElementById('mother-health-profile').open = false;
@@ -3227,6 +3595,7 @@
 
             setValue('m-name', mother.name || mother.full_name);
             setValue('m-contact', String(mother.contact || mother.contact_number || '').replace(/[-\s]/g, ''));
+            document.getElementById('m-dob').max = localDateInputValue();
             setValue('m-dob', (mother.date_of_birth || '').slice(0, 10));
             setValue('m-email', mother.email);
             setValue('m-husband', mother.husband_name);
@@ -3235,7 +3604,13 @@
             setValue('m-purok', mother.purok);
             setValue('m-gender', mother.gender || 'Female');
             setValue('m-delivery-type', mother.delivery_type);
-            setValue('m-age', mother.age);
+            if (document.getElementById('m-dob').value) {
+                updateMotherAgeFromDob();
+            } else {
+                setValue('m-age', mother.age);
+                updateMotherAgeFromDob();
+            }
+            updateMotherAgeWarning();
             setValue('m-zone', mother.zone || 'Purok 1');
             setValue('m-lmp', (mother.lmp || mother.last_menstrual_period || '').slice(0, 10));
             setValue('m-edd', (mother.expected_delivery_date || '').slice(0, 10));
