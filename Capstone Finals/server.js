@@ -112,6 +112,7 @@ let resourceNeedsTableSetup;
 let supplyDistributionsTableSetup;
 let maternalRecordColumnsSetup;
 let prenatalVisitsTableSetup;
+let maternalRecordAccessLinksSetup;
 
 function hashSessionToken(token) {
     return createHash("sha256").update(token).digest("hex");
@@ -273,6 +274,60 @@ async function ensureAuthTables() {
         });
     }
     await authTableSetup;
+}
+
+async function ensureMaternalRecordAccessLinksTable() {
+    if (!maternalRecordAccessLinksSetup) {
+        maternalRecordAccessLinksSetup = databasePool.query(`
+            CREATE TABLE IF NOT EXISTS maternal_record_access_links (
+                token_hash CHAR(64) PRIMARY KEY,
+                maternal_record_id INT NOT NULL,
+                created_by INT NULL,
+                expires_at DATETIME NOT NULL,
+                revoked_at DATETIME NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_maternal_record_access_expiry (expires_at),
+                INDEX idx_maternal_record_access_record (maternal_record_id),
+                FOREIGN KEY (maternal_record_id) REFERENCES maternal_records(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES app_users(id) ON DELETE SET NULL
+            )
+        `).catch(error => {
+            maternalRecordAccessLinksSetup = null;
+            throw error;
+        });
+    }
+    await maternalRecordAccessLinksSetup;
+}
+
+async function createMaternalRecordAccessLink(executor, maternalRecordId, createdBy = null) {
+    const token = randomBytes(32).toString("base64url");
+    await executor.execute(`
+        INSERT INTO maternal_record_access_links
+            (token_hash, maternal_record_id, created_by, expires_at)
+        VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 30 DAY))
+    `, [hashSessionToken(token), maternalRecordId, createdBy]);
+    return token;
+}
+
+function getPublicAppUrl() {
+    const configuredUrl = process.env.PUBLIC_APP_URL?.trim();
+    if (process.env.NODE_ENV === "production" && !configuredUrl) {
+        throw new Error("Set PUBLIC_APP_URL to the public HTTPS MaternaCare URL before sending patient links.");
+    }
+
+    const publicUrl = new URL(configuredUrl || `http://localhost:${port}`);
+    if (!["http:", "https:"].includes(publicUrl.protocol)
+        || publicUrl.username
+        || publicUrl.password
+        || publicUrl.pathname !== "/"
+        || publicUrl.search
+        || publicUrl.hash) {
+        throw new Error("PUBLIC_APP_URL must be an HTTP(S) origin without a path, query, or fragment.");
+    }
+    if (process.env.NODE_ENV === "production" && publicUrl.protocol !== "https:") {
+        throw new Error("PUBLIC_APP_URL must use HTTPS in production.");
+    }
+    return publicUrl.origin;
 }
 
 function getSessionToken(request) {
@@ -799,6 +854,83 @@ app.post("/api/auth/logout", async (request, response) => {
     }
 });
 
+app.post("/api/patient-record-access", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("Pragma", "no-cache");
+    response.setHeader("Referrer-Policy", "no-referrer");
+    response.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+
+    const token = request.body?.token;
+    if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+        return response.status(404).json({ error: "This patient link is invalid or has expired. Contact your barangay health worker for a new link." });
+    }
+
+    try {
+        await ensureAuthTables();
+        await ensureMaternalRecordColumns();
+        await ensureMaternalRecordAccessLinksTable();
+        await ensurePrenatalVisitsTable();
+        await ensureMaternalMedicationTable();
+
+        const [records] = await databasePool.execute(`
+            SELECT m.id AS maternal_record_id, m.full_name, m.age, m.date_of_birth,
+                   m.last_menstrual_period, m.expected_delivery_date, m.manual_gravida,
+                   m.para, m.term, m.preterm, m.abortion, m.living_children,
+                   m.age_of_gestation, m.high_risk, m.blood_pressure, m.pulse_rate,
+                   m.respiratory_rate, m.weight, m.height, m.fetal_heart_tone,
+                   m.presentation, m.fundal_height, m.next_appointment
+            FROM maternal_record_access_links access_link
+            INNER JOIN maternal_records m ON m.id = access_link.maternal_record_id
+            WHERE access_link.token_hash = ?
+              AND access_link.revoked_at IS NULL
+              AND access_link.expires_at > NOW()
+              AND m.archived = FALSE
+            LIMIT 1
+        `, [hashSessionToken(token)]);
+        if (!records.length) {
+            return response.status(404).json({ error: "This patient link is invalid or has expired. Contact your barangay health worker for a new link." });
+        }
+
+        const maternalRecord = records[0];
+        const maternalRecordId = maternalRecord.maternal_record_id;
+        delete maternalRecord.maternal_record_id;
+        const [visits, appointments, medications] = await Promise.all([
+            databasePool.execute(`
+                SELECT DATE_FORMAT(date, '%Y-%m-%d') AS date, blood_pressure, pulse_rate,
+                       respiratory_rate, aog, height, weight, fundal_height, fht,
+                       presentation, DATE_FORMAT(to_come_back, '%Y-%m-%d') AS to_come_back
+                FROM vital_signs_entries
+                WHERE maternal_record_id = ?
+                ORDER BY date DESC, id DESC
+            `, [maternalRecordId]),
+            databasePool.execute(`
+                SELECT DATE_FORMAT(appointment_date, '%Y-%m-%d') AS appointment_date,
+                       TIME_FORMAT(appointment_time, '%H:%i') AS appointment_time,
+                       purpose, status
+                FROM appointments
+                WHERE maternal_record_id = ? AND status = 'Scheduled'
+                  AND appointment_date >= CURRENT_DATE
+                ORDER BY appointment_date ASC, appointment_time ASC
+            `, [maternalRecordId]),
+            databasePool.execute(`
+                SELECT medicine_name, quantity, unit, DATE_FORMAT(given_date, '%Y-%m-%d') AS given_date
+                FROM maternal_medication_records
+                WHERE maternal_record_id = ?
+                ORDER BY given_date DESC, id DESC
+            `, [maternalRecordId])
+        ]);
+        return response.json({
+            patient: maternalRecord,
+            visits: visits[0],
+            appointments: appointments[0],
+            medications: medications[0]
+        });
+    } catch (error) {
+        console.error("Patient record link lookup failed:", error.message);
+        return response.status(503).json({ error: "The patient record is temporarily unavailable. Please try again later." });
+    }
+});
+
 app.use("/api", authenticate);
 
 app.use("/api", (request, response, next) => {
@@ -904,6 +1036,81 @@ app.post("/api/admin/users/:id/password", async (request, response) => {
     } catch (error) {
         console.error("Admin password reset failed:", error.message);
         return response.status(503).json({ error: "The account password could not be reset." });
+    }
+});
+
+app.post("/api/mothers/:patientId/access-link", async (request, response) => {
+    if (request.user.role !== "bhw" || !request.user.barangay) {
+        return response.status(403).json({ error: "An assigned barangay health-worker account is required to share a patient record." });
+    }
+
+    const patientId = String(request.params.patientId || "").trim();
+    if (!patientId || patientId.length > 50) {
+        return response.status(400).json({ error: "A valid patient ID is required." });
+    }
+
+    let connection;
+    try {
+        await ensureMaternalRecordColumns();
+        await ensureMaternalRecordAccessLinksTable();
+        connection = await databasePool.getConnection();
+        await connection.beginTransaction();
+        const [mothers] = await connection.execute(`
+            SELECT id FROM maternal_records
+            WHERE patient_id = ? AND barangay = ? AND archived = FALSE
+            LIMIT 1 FOR UPDATE
+        `, [patientId, request.user.barangay]);
+        if (!mothers.length) {
+            await connection.rollback();
+            return response.status(404).json({ error: "This mother record is not available to your barangay." });
+        }
+        await connection.execute(`
+            UPDATE maternal_record_access_links
+            SET revoked_at = NOW()
+            WHERE maternal_record_id = ? AND revoked_at IS NULL
+        `, [mothers[0].id]);
+        const token = await createMaternalRecordAccessLink(connection, mothers[0].id, request.user.id);
+        await connection.commit();
+        return response.status(201).json({ token, expiresInDays: 30 });
+    } catch (error) {
+        if (connection) {
+            try {
+                await connection.rollback();
+            } catch (rollbackError) {
+                console.error("Patient record access link transaction rollback failed:", rollbackError.message);
+            }
+        }
+        console.error("Patient record access link creation failed:", error.message);
+        return response.status(503).json({ error: "The patient access link could not be created." });
+    } finally {
+        if (connection) connection.release();
+    }
+});
+
+app.delete("/api/mothers/:patientId/access-link", async (request, response) => {
+    if (request.user.role !== "bhw" || !request.user.barangay) {
+        return response.status(403).json({ error: "An assigned barangay health-worker account is required to revoke a patient link." });
+    }
+
+    const patientId = String(request.params.patientId || "").trim();
+    if (!patientId || patientId.length > 50) {
+        return response.status(400).json({ error: "A valid patient ID is required." });
+    }
+
+    try {
+        await ensureMaternalRecordColumns();
+        await ensureMaternalRecordAccessLinksTable();
+        await databasePool.execute(`
+            UPDATE maternal_record_access_links access_link
+            INNER JOIN maternal_records m ON m.id = access_link.maternal_record_id
+            SET access_link.revoked_at = NOW()
+            WHERE m.patient_id = ? AND m.barangay = ? AND m.archived = FALSE
+              AND access_link.revoked_at IS NULL
+        `, [patientId, request.user.barangay]);
+        return response.status(204).end();
+    } catch (error) {
+        console.error("Patient record access link revocation failed:", error.message);
+        return response.status(503).json({ error: "The patient access link could not be revoked." });
     }
 });
 
@@ -2043,28 +2250,88 @@ app.post("/api/send-sms", async (request, response) => {
     if (request.user.role !== "bhw") {
         return response.status(403).json({ error: "Municipality accounts can access barangay resource inventory only." });
     }
-    const { recipient, message } = request.body || {};
-
-    try {
-        const { result } = await sendPhilSms(recipient, message);
-        return response.json(result);
-    } catch (error) {
-        console.error("PhilSMS request failed:", error.message);
-        const status = error.message.includes("required") || error.message.includes("not configured") ? 400 : 502;
-        return response.status(status).json({ error: error.message });
+    if (!request.user.barangay) {
+        return response.status(403).json({ error: "An assigned barangay health-worker account is required to send patient reminders." });
     }
+    const patientId = typeof request.body?.patient_id === "string" ? request.body.patient_id.trim() : "";
+    const message = typeof request.body?.message === "string" ? request.body.message.trim() : "";
+    if (!patientId || patientId.length > 50 || !message) {
+        return response.status(400).json({ error: "A valid patient ID and reminder message are required." });
+    }
+
+    let publicAppUrl;
+    try {
+        publicAppUrl = getPublicAppUrl();
+    } catch (error) {
+        console.error("Patient link URL configuration failed:", error.message);
+        return response.status(503).json({ error: error.message });
+    }
+
+    let mother;
+    try {
+        await ensureMaternalRecordColumns();
+        await ensureMaternalRecordAccessLinksTable();
+        const [mothers] = await databasePool.execute(`
+            SELECT id, contact_number FROM maternal_records
+            WHERE patient_id = ? AND barangay = ? AND archived = FALSE
+            LIMIT 1
+        `, [patientId, request.user.barangay]);
+        if (!mothers.length) {
+            return response.status(404).json({ error: "This mother record is not available to your barangay." });
+        }
+        mother = mothers[0];
+    } catch (error) {
+        console.error("Patient reminder recipient lookup failed:", error.message);
+        return response.status(503).json({ error: "The patient record could not be loaded for SMS delivery." });
+    }
+
+    if (!normalizePhilippineNumber(mother.contact_number)) {
+        return response.status(400).json({ error: "A valid Philippine mobile number is not saved for this patient." });
+    }
+
+    let accessToken;
+    try {
+        accessToken = await createMaternalRecordAccessLink(databasePool, mother.id, request.user.id);
+    } catch (error) {
+        console.error("Patient reminder link creation failed:", error.message);
+        return response.status(503).json({ error: "The patient record link could not be created." });
+    }
+
+    const link = `${publicAppUrl}/patient-record.html#${accessToken}`;
+    const completeMessage = `${message}\n\nView your maternal health record (link expires in 30 days): ${link}`;
+    try {
+        await sendPhilSms(mother.contact_number, completeMessage);
+    } catch (error) {
+        const safeError = error.message.split(accessToken).join("[redacted]");
+        console.error("PhilSMS request failed:", safeError);
+        try {
+            await databasePool.execute(`
+                UPDATE maternal_record_access_links
+                SET revoked_at = NOW()
+                WHERE token_hash = ? AND revoked_at IS NULL
+            `, [hashSessionToken(accessToken)]);
+        } catch (revokeError) {
+            console.error("Failed SMS link cleanup failed:", revokeError.message);
+        }
+        const status = error.message.includes("required") || error.message.includes("not configured") ? 400 : 502;
+        return response.status(status).json({ error: safeError });
+    }
+    return response.json({ sent: true });
 });
 
 async function runAppointmentReminders() {
     if (!process.env.PHILSMS_API_TOKEN || !process.env.PHILSMS_SENDER_ID) return;
 
     try {
+        await ensureAuthTables();
+        await ensureMaternalRecordColumns();
         const [appointments] = await databasePool.execute(`
             SELECT a.id, a.appointment_date, a.appointment_time, a.purpose,
                    m.id AS maternal_record_id, m.full_name, m.contact_number
             FROM appointments a
             INNER JOIN maternal_records m ON m.id = a.maternal_record_id
             WHERE a.status = 'Scheduled'
+              AND m.archived = FALSE
               AND TIMESTAMP(a.appointment_date, a.appointment_time) > NOW()
               AND TIMESTAMP(a.appointment_date, a.appointment_time) <= DATE_ADD(NOW(), INTERVAL ${reminderHoursBefore} HOUR)
               AND NOT EXISTS (
@@ -2073,20 +2340,42 @@ async function runAppointmentReminders() {
                     AND s.status = 'Sent'
               )
         `);
+        if (!appointments.length) return;
+        const publicAppUrl = getPublicAppUrl();
+        await ensureMaternalRecordAccessLinksTable();
 
         for (const appointment of appointments) {
             const reminderKey = `appointment-reminder:${appointment.id}`;
-            const message = `MaternaCare reminder: Hello ${appointment.full_name}. Your ${appointment.purpose} is scheduled for ${appointment.appointment_date} at ${appointment.appointment_time}. Please visit the Barangay Health Center on time.`;
+            let accessToken;
+            let smsSent = false;
 
             try {
+                accessToken = await createMaternalRecordAccessLink(databasePool, appointment.maternal_record_id);
+                const link = `${publicAppUrl}/patient-record.html#${accessToken}`;
+                const message = `MaternaCare reminder: Hello ${appointment.full_name}. Your ${appointment.purpose} is scheduled for ${appointment.appointment_date} at ${appointment.appointment_time}. Please visit the Barangay Health Center on time.\n\nView your maternal health record (link expires in 30 days): ${link}`;
                 const { normalizedRecipient, result } = await sendPhilSms(appointment.contact_number, message);
+                smsSent = true;
+                const loggedMessage = message.replace(link, "[secure patient record link]");
+                const providerResponse = JSON.stringify(result)?.split(accessToken).join("[redacted]") || null;
                 await databasePool.execute(`
                     INSERT INTO sms_logs (maternal_record_id, recipient, message, provider_message_id, status, provider_response)
                     VALUES (?, ?, ?, ?, 'Sent', ?)
-                `, [appointment.maternal_record_id, normalizedRecipient, message, reminderKey, JSON.stringify(result)]);
+                `, [appointment.maternal_record_id, normalizedRecipient, loggedMessage, reminderKey, providerResponse]);
                 console.log(`Automatic appointment reminder sent for appointment ${appointment.id}.`);
             } catch (error) {
-                console.error(`Automatic reminder failed for appointment ${appointment.id}:`, error.message);
+                if (accessToken && !smsSent) {
+                    try {
+                        await databasePool.execute(`
+                            UPDATE maternal_record_access_links
+                            SET revoked_at = NOW()
+                            WHERE token_hash = ? AND revoked_at IS NULL
+                        `, [hashSessionToken(accessToken)]);
+                    } catch (revokeError) {
+                        console.error("Failed automatic reminder link cleanup failed:", revokeError.message);
+                    }
+                }
+                const safeError = accessToken ? error.message.split(accessToken).join("[redacted]") : error.message;
+                console.error(`Automatic reminder failed for appointment ${appointment.id}:`, safeError);
             }
         }
     } catch (error) {

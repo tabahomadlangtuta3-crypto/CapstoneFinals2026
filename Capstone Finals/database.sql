@@ -151,6 +151,19 @@ CREATE TABLE IF NOT EXISTS app_sessions (
     FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS maternal_record_access_links (
+    token_hash CHAR(64) PRIMARY KEY,
+    maternal_record_id INT NOT NULL,
+    created_by INT NULL,
+    expires_at DATETIME NOT NULL,
+    revoked_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_maternal_record_access_expiry (expires_at),
+    INDEX idx_maternal_record_access_record (maternal_record_id),
+    FOREIGN KEY (maternal_record_id) REFERENCES maternal_records(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES app_users(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS barangay_resource_needs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     barangay VARCHAR(120) NOT NULL,

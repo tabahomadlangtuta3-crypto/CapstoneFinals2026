@@ -533,7 +533,7 @@
                             <span class="text-[10px] font-bold tracking-widest uppercase bg-pink-500/20 text-pink-300 px-2.5 py-1 rounded-full border border-pink-500/30">Maternal Outreach</span>
                             <h3 class="text-lg font-bold">Appointment Reminder SMS</h3>
                             <p class="text-xs text-slate-300 leading-relaxed">
-                                Send a prenatal visit reminder to a registered mother using the configured messaging provider.
+                                Send a prenatal visit reminder with a secure link to the patient's maternal health record.
                             </p>
                         </div>
 
@@ -552,7 +552,7 @@
                         
                         <div class="text-[10px] text-slate-400 flex items-center gap-1.5 relative z-10">
                             <i class="fa-solid fa-lock"></i>
-                            <span>SMS reminders are sent using the configured messaging provider.</span>
+                            <span>The SMS includes a read-only record link that expires after 30 days.</span>
                         </div>
                     </div>
                 </div>
@@ -3357,7 +3357,23 @@
                     <div id="mother-medication-history" class="text-sm text-slate-500">Loading medicine history…</div>
                     ${medicationForm}
                 </section>`;
-            document.getElementById('view-mother-content').innerHTML = sections.join('') + medicationSection;
+            const patientAccessSection = activeUser?.role === 'bhw' && mother.databaseSaved ? `
+                <section class="no-print rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm">
+                    <h4 class="text-xs font-bold uppercase tracking-wide text-indigo-800">Patient record access link</h4>
+                    <p class="mt-2 text-xs leading-relaxed text-slate-600">Create a read-only link for this patient to view their pregnancy summary, prenatal visits, upcoming appointments, and medicines. It expires in 30 days. Anyone with a link can open it. Creating a replacement link revokes all other links, including links previously sent by SMS.</p>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                        <button type="button" onclick="createPatientAccessLink(this.dataset.patientId, this)" data-patient-id="${escapeHtml(mother.patient_id || mother.id)}" class="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800">Create / replace link</button>
+                        <button type="button" onclick="revokePatientAccessLink(this.dataset.patientId)" data-patient-id="${escapeHtml(mother.patient_id || mother.id)}" class="rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50">Revoke link</button>
+                    </div>
+                    <div id="patient-access-link-result" class="hidden mt-3 space-y-2">
+                        <label for="patient-access-link-url" class="block text-xs font-semibold text-slate-700">Share this link with the patient</label>
+                        <div class="flex flex-col gap-2 sm:flex-row">
+                            <input id="patient-access-link-url" type="text" readonly class="min-w-0 flex-1 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs text-slate-700">
+                            <button type="button" onclick="copyPatientAccessLink()" class="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100">Copy link</button>
+                        </div>
+                    </div>
+                </section>` : '';
+            document.getElementById('view-mother-content').innerHTML = sections.join('') + medicationSection + patientAccessSection;
             if (activeUser?.role === 'bhw') {
                 document.getElementById('mother-medication-date').max = localDateInputValue();
                 document.getElementById('mother-medication-date').value = localDateInputValue();
@@ -3367,6 +3383,60 @@
                 document.getElementById('mother-medication-history').textContent = 'Medicine history is available to the assigned barangay health worker.';
             }
             document.getElementById('modal-view-mother').classList.remove('hidden');
+        }
+
+        async function createPatientAccessLink(patientId, button) {
+            if (button) button.disabled = true;
+            try {
+                const response = await fetch(`/api/mothers/${encodeURIComponent(patientId)}/access-link`, { method: 'POST' });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'The patient access link could not be created.');
+                const link = `${window.location.origin}/patient-record.html#${result.token}`;
+                const resultPanel = document.getElementById('patient-access-link-result');
+                const linkInput = document.getElementById('patient-access-link-url');
+                if (!resultPanel || !linkInput) throw new Error('The patient link panel is no longer available. Reopen the maternal record and try again.');
+                linkInput.value = link;
+                resultPanel.classList.remove('hidden');
+                triggerToast('Patient link created. Share it directly with the patient.');
+            } catch (error) {
+                triggerToast(error.message || 'The patient access link could not be created.');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function copyPatientAccessLink() {
+            const linkInput = document.getElementById('patient-access-link-url');
+            if (!linkInput?.value) {
+                triggerToast('Create a patient link first.');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(linkInput.value);
+                triggerToast('Patient link copied.');
+            } catch (error) {
+                linkInput.focus();
+                linkInput.select();
+                triggerToast('Copy is unavailable here. The link is selected so you can copy it manually.');
+            }
+        }
+
+        async function revokePatientAccessLink(patientId) {
+            if (!confirm('Revoke the patient access link? Anyone using the current link will lose access.')) return;
+            try {
+                const response = await fetch(`/api/mothers/${encodeURIComponent(patientId)}/access-link`, { method: 'DELETE' });
+                if (!response.ok) {
+                    const result = await response.json().catch(() => ({}));
+                    throw new Error(result.error || 'The patient access link could not be revoked.');
+                }
+                const resultPanel = document.getElementById('patient-access-link-result');
+                const linkInput = document.getElementById('patient-access-link-url');
+                if (linkInput) linkInput.value = '';
+                resultPanel?.classList.add('hidden');
+                triggerToast('Patient access link revoked.');
+            } catch (error) {
+                triggerToast(error.message || 'The patient access link could not be revoked.');
+            }
         }
 
         async function loadMotherMedicationHistory(patientId) {
@@ -4047,9 +4117,9 @@
 
             const message = `MaternaCare confirmation: Hello ${mother.name}. Your prenatal appointment is scheduled for ${date} at ${formatTimeToAMPM(time)}. Please contact the health center if you need to reschedule.`;
             try {
-                await sendSmsNotification(mother.contact, message);
+                await sendSmsNotification(mother.patient_id || mother.id, message);
                 pushAuditLog("Outgoing Notification", "SUCCESS", "Appointment confirmation SMS sent.");
-                triggerToast(`Appointment saved and confirmation SMS sent.`);
+                triggerToast(`Appointment saved and confirmation with record link sent.`);
             } catch (error) {
                 pushAuditLog("Outgoing Notification", "FAILED", "Appointment saved, but the confirmation SMS could not be sent.");
                 triggerToast(`Appointment saved, but the confirmation SMS could not be sent.`);
@@ -4081,11 +4151,11 @@
         // ==============================================
         // OUTREACH NOTIFICATION
         // ==============================================
-        async function sendSmsNotification(recipient, message) {
+        async function sendSmsNotification(patientId, message) {
             const response = await fetch("/api/send-sms", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ recipient, message })
+                body: JSON.stringify({ patient_id: patientId, message })
             });
 
             if (!response.ok) {
@@ -4111,9 +4181,9 @@
             const message = `MaternaCare Alert: Hello ${mother.name}. This is to remind you of your clinical visit schedule for "${nextApptStr}". Your current gestation milestone is ${lmpDetails.text} (EDD: ${formatDateForDisplay(mother.expected_delivery_date)}). Please visit the Barangay Health Center on time. Stay safe!`;
             
             try {
-                await sendSmsNotification(mother.contact, message);
+                await sendSmsNotification(mother.patient_id || mother.id, message);
                 pushAuditLog("Outgoing Notification", "SUCCESS", `SMS reminder dispatched to ${mother.contact} for "${nextApptStr}".`);
-                triggerToast(`SMS reminder sent to ${mother.name}.`);
+                triggerToast(`SMS reminder and record link sent to ${mother.name}.`);
             } catch (error) {
                 pushAuditLog("Outgoing Notification", "FAILED", `SMS delivery failed for ${mother.contact}.`);
                 triggerToast(`SMS failed for ${mother.name}: ${error.message}`);

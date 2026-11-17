@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow, noarchive">
+    <title>Your MaternaCare Record</title>
+    <style>
+        :root {
+            color-scheme: light;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #1e293b;
+            background: #f8fafc;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        header { padding: 18px 24px; background: #0f172a; color: white; }
+        header strong { font-size: 18px; letter-spacing: .02em; }
+        main { width: min(100% - 32px, 900px); margin: 32px auto; }
+        h1 { margin: 0; font-size: clamp(24px, 5vw, 32px); }
+        h2 { margin: 0 0 14px; font-size: 17px; }
+        p { line-height: 1.55; }
+        .intro { margin: 8px 0 20px; color: #64748b; }
+        .notice { margin: 0 0 20px; padding: 12px 14px; border: 1px solid #c7d2fe; border-radius: 12px; background: #eef2ff; color: #3730a3; font-size: 13px; }
+        .card { margin: 16px 0; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background: white; box-shadow: 0 2px 8px rgb(15 23 42 / 4%); }
+        dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px 20px; margin: 0; }
+        dt { color: #64748b; font-size: 12px; }
+        dd { margin: 4px 0 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+        .entry { padding: 12px 0; border-top: 1px solid #f1f5f9; }
+        .entry:first-of-type { padding-top: 0; border-top: 0; }
+        .entry strong { display: block; margin-bottom: 6px; font-size: 14px; }
+        .entry p { margin: 4px 0; color: #475569; font-size: 13px; }
+        .empty { color: #64748b; font-size: 13px; }
+        .error { padding: 16px; border: 1px solid #fecaca; border-radius: 12px; background: #fff1f2; color: #9f1239; }
+        footer { margin: 24px 0; color: #64748b; font-size: 12px; line-height: 1.5; }
+        [hidden] { display: none !important; }
+    </style>
+</head>
+<body>
+    <header><strong>MaternaCare</strong></header>
+    <main>
+        <div id="loading" class="card">Loading your record…</div>
+        <div id="error" class="error" hidden></div>
+        <div id="record" hidden>
+            <h1>Your maternal health record</h1>
+            <p class="intro">This is a read-only view of the information recorded by your health worker.</p>
+            <p class="notice">Keep this link private. Anyone who has it can view this record. If you did not expect this link or it no longer works, contact your barangay health worker.</p>
+            <div id="record-sections"></div>
+            <footer>If any information looks incorrect or you have questions about your care, contact your barangay health worker or healthcare provider. This page displays recorded information and does not replace professional medical advice.</footer>
+        </div>
+    </main>
+    <script>
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function displayDate(value) {
+            if (!value) return '';
+            const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
+                ? new Date(`${value}T00:00:00`)
+                : new Date(value);
+            return Number.isNaN(date.getTime())
+                ? String(value)
+                : new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(date);
+        }
+
+        function formatValue(value, unit = '') {
+            if (value === null || value === undefined || value === '') return '';
+            return `${value}${unit ? ` ${unit}` : ''}`;
+        }
+
+        function renderDetails(title, entries) {
+            const rows = entries
+                .filter(([, value]) => value !== null && value !== undefined && value !== '')
+                .map(([label, value]) => `
+                    <div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>
+                `).join('');
+            return rows ? `
+                <section class="card">
+                    <h2>${escapeHtml(title)}</h2>
+                    <dl>${rows}</dl>
+                </section>
+            ` : '';
+        }
+
+        function renderList(title, items, renderItem, emptyMessage) {
+            const content = items.length
+                ? items.map(renderItem).join('')
+                : `<p class="empty">${escapeHtml(emptyMessage)}</p>`;
+            return `<section class="card"><h2>${escapeHtml(title)}</h2>${content}</section>`;
+        }
+
+        function renderRecord(data) {
+            const patient = data.patient || {};
+            const sections = [
+                renderDetails('Personal information', [
+                    ['Full name', patient.full_name],
+                    ['Age', formatValue(patient.age, 'years')],
+                    ['Date of birth', displayDate(patient.date_of_birth)]
+                ]),
+                renderDetails('Pregnancy information', [
+                    ['Last menstrual period', displayDate(patient.last_menstrual_period)],
+                    ['Expected delivery date', displayDate(patient.expected_delivery_date)],
+                    ['Gestational age at last assessment', formatValue(patient.age_of_gestation, 'weeks')],
+                    ['Pregnancy number (G)', patient.manual_gravida],
+                    ['Para (P)', patient.para],
+                    ['Term pregnancies', patient.term],
+                    ['Preterm pregnancies', patient.preterm],
+                    ['Abortions', patient.abortion],
+                    ['Living children', patient.living_children],
+                    ['High-risk pregnancy', patient.high_risk ? 'Yes' : 'Not marked as high risk']
+                ]),
+                renderDetails('Measurements at registration', [
+                    ['Blood pressure', patient.blood_pressure],
+                    ['Pulse rate', formatValue(patient.pulse_rate, 'bpm')],
+                    ['Respiratory rate', formatValue(patient.respiratory_rate, 'breaths/min')],
+                    ['Weight', formatValue(patient.weight, 'kg')],
+                    ['Height', formatValue(patient.height, 'cm')],
+                    ['Fetal heart tone', formatValue(patient.fetal_heart_tone, 'bpm')],
+                    ['Presentation', patient.presentation],
+                    ['Fundal height', formatValue(patient.fundal_height, 'cm')],
+                    ['Next appointment', displayDate(patient.next_appointment)]
+                ]),
+                renderList('Prenatal visit history', data.visits || [], visit => `
+                    <article class="entry">
+                        <strong>${escapeHtml(displayDate(visit.date) || 'Visit')}</strong>
+                        <p>${escapeHtml([
+                            visit.blood_pressure && `Blood pressure: ${visit.blood_pressure}`,
+                            visit.pulse_rate && `Pulse: ${visit.pulse_rate} bpm`,
+                            visit.respiratory_rate && `Respiratory rate: ${visit.respiratory_rate} breaths/min`,
+                            visit.aog && `Gestational age: ${visit.aog} weeks`,
+                            visit.weight && `Weight: ${visit.weight} kg`,
+                            visit.fundal_height && `Fundal height: ${visit.fundal_height} cm`,
+                            visit.fht && `Fetal heart tone: ${visit.fht} bpm`,
+                            visit.presentation && `Presentation: ${visit.presentation}`,
+                            visit.to_come_back && `Return date: ${displayDate(visit.to_come_back)}`
+                        ].filter(Boolean).join(' · ') || 'No measurements recorded for this visit.')}</p>
+                    </article>
+                `, 'No prenatal visits have been recorded yet.'),
+                renderList('Upcoming appointments', data.appointments || [], appointment => `
+                    <article class="entry">
+                        <strong>${escapeHtml(displayDate(appointment.appointment_date))}${appointment.appointment_time ? ` · ${escapeHtml(appointment.appointment_time)}` : ''}</strong>
+                        <p>${escapeHtml(appointment.purpose)}</p>
+                    </article>
+                `, 'There are no upcoming appointments recorded.'),
+                renderList('Medicines given', data.medications || [], medicine => `
+                    <article class="entry">
+                        <strong>${escapeHtml(medicine.medicine_name)}</strong>
+                        <p>${escapeHtml([
+                            medicine.given_date && `Date: ${displayDate(medicine.given_date)}`,
+                            medicine.quantity !== null && medicine.quantity !== undefined && `Recorded as given: ${medicine.quantity} ${medicine.unit || ''}`.trim()
+                        ].filter(Boolean).join(' · '))}</p>
+                    </article>
+                `, 'No medicines have been recorded.')
+            ].filter(Boolean).join('');
+
+            document.getElementById('record-sections').innerHTML = sections;
+            document.getElementById('loading').hidden = true;
+            document.getElementById('record').hidden = false;
+        }
+
+        async function loadRecord() {
+            const token = window.location.hash.slice(1);
+            if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+                throw new Error('This patient link is invalid or has expired. Contact your barangay health worker for a new link.');
+            }
+            window.history.replaceState(null, '', window.location.pathname);
+
+            const response = await fetch('/api/patient-record-access', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token }),
+                cache: 'no-store',
+                credentials: 'omit',
+                referrerPolicy: 'no-referrer'
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || 'Your record could not be loaded. Please try again later.');
+            renderRecord(result);
+        }
+
+        loadRecord().catch(error => {
+            document.getElementById('loading').hidden = true;
+            const errorElement = document.getElementById('error');
+            errorElement.textContent = error.message || 'Your record could not be loaded. Please try again later.';
+            errorElement.hidden = false;
+        });
+    </script>
+</body>
+</html>
