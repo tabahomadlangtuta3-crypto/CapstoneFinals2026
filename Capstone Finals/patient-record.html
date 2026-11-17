@@ -170,8 +170,6 @@
             if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
                 throw new Error('This patient link is invalid or has expired. Contact your barangay health worker for a new link.');
             }
-            window.history.replaceState(null, '', window.location.pathname);
-
             const response = await fetch('/api/patient-record-access', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
